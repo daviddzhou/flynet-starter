@@ -75,9 +75,15 @@ async function renderRestaurants(apiKey: string | undefined): Promise<ReactNode>
       apiKey,
       serverURL: process.env.API_BASE_URL || undefined,
     });
-    const { restaurants } = await discovery.restaurants.listRestaurants({
-      pageSize: 8,
+    // The list includes unpublished records with blank names (production has
+    // many, and blank names sort first) — over-fetch and keep the first 8
+    // that are actually presentable.
+    const listed = await discovery.restaurants.listRestaurants({
+      pageSize: 50,
     });
+    const restaurants = listed.restaurants
+      .filter((restaurant) => restaurant.name)
+      .slice(0, 8);
     // Locations are a separate Discovery resource — fetch them in parallel,
     // one call per listed restaurant (raw fetch, see lib/locations.ts). A
     // failed lookup just hides the location line on that card.
