@@ -211,6 +211,7 @@ export function PassportQuest({
   const [generation, setGeneration] = useState(0);
   const [challengeVersion, setChallengeVersion] = useState(0);
   const [challengeGenerated, setChallengeGenerated] = useState(false);
+  const [recentRouteStopKeys, setRecentRouteStopKeys] = useState<string[]>([]);
   const [manualStartPoint, setManualStartPoint] = useState<RoutePoint | null>(
     null,
   );
@@ -309,6 +310,7 @@ export function PassportQuest({
         durationMinutes,
         generation,
         preferences: activePreferences,
+        recentStopKeys: recentRouteStopKeys,
         startCoordinate,
       }).map((stop, index) => ({ ...stop, order: index + 1 })),
     [
@@ -318,6 +320,7 @@ export function PassportQuest({
       generation,
       quest.stops,
       questLength,
+      recentRouteStopKeys,
       startCoordinate,
     ],
   );
@@ -375,6 +378,12 @@ export function PassportQuest({
     setCheckedStopKeys([]);
   }, [selectedStopSignature]);
 
+  useEffect(() => {
+    if (!challengeGenerated) {
+      setRecentRouteStopKeys([]);
+    }
+  }, [challengeGenerated]);
+
   function togglePreference(preference: string) {
     setChallengeGenerated(false);
     setCheckedStopKeys([]);
@@ -405,6 +414,7 @@ export function PassportQuest({
   }
 
   function generateQuest() {
+    setRecentRouteStopKeys(selectedStops.map(stopKey));
     setGeneration((current) => current + 1);
     setChallengeVersion((current) => current + 1);
     setChallengeGenerated(true);
@@ -437,6 +447,7 @@ export function PassportQuest({
     if (!nextTrack.stopOptions.includes(questLength)) {
       setQuestLength(nextTrack.defaultStops);
     }
+    setRecentRouteStopKeys(selectedStops.map(stopKey));
     setGeneration((current) => current + 1);
     setChallengeVersion((current) => current + 1);
     setChallengeGenerated(true);
@@ -1837,6 +1848,7 @@ function selectStops({
   durationMinutes,
   generation,
   preferences,
+  recentStopKeys,
   startCoordinate,
 }: {
   stops: QuestStop[];
@@ -1845,12 +1857,20 @@ function selectStops({
   durationMinutes: number;
   generation: number;
   preferences: string[];
+  recentStopKeys: string[];
   startCoordinate: Coordinate | null;
 }): QuestStop[] {
+  const recent = new Set(recentStopKeys);
   const scored = stops
     .map((stop) => ({
       stop,
-      score: scoreStop(stop, preferences, track, generation),
+      score:
+        scoreStop(stop, preferences, track, generation) -
+        (recent.has(stopKey(stop))
+          ? track.id === "roulette"
+            ? 430
+            : 340
+          : 0),
     }))
     .sort((a, b) => b.score - a.score);
   const pool = buildCompactRoutePool(
@@ -1858,6 +1878,7 @@ function selectStops({
     count,
     track,
     durationMinutes,
+    generation,
     startCoordinate,
   );
 
@@ -1871,6 +1892,7 @@ function buildCompactRoutePool(
   count: QuestLength,
   track: ChallengeTrack,
   durationMinutes: number,
+  generation: number,
   startCoordinate: Coordinate | null,
 ): Array<{ stop: QuestStop; score: number }> {
   const mapped = scored.filter(({ stop }) => stop.coordinate);
@@ -1886,28 +1908,37 @@ function buildCompactRoutePool(
     track.id === "crawl" ? 2.4 : track.id === "classic" ? 3.4 : 2.6,
     Math.max(1.5, walkingBudgetKm * 0.62),
   );
-  const anchors = mapped.slice(0, Math.min(40, mapped.length));
+  const anchors = buildVariedAnchors(mapped, count, generation);
   const clusters = anchors.map((anchor) => {
-    const items = mapped
+    const rankedItems = mapped
       .map((candidate) => ({
         candidate,
         distance:
           anchor.stop.coordinate && candidate.stop.coordinate
             ? distanceKm(anchor.stop.coordinate, candidate.stop.coordinate)
             : Number.POSITIVE_INFINITY,
+        variety: deterministicJitter(
+          `${track.id}:${generation}:${anchor.stop.restaurantId}:${candidate.stop.restaurantId}`,
+          track.id === "roulette" ? 180 : 130,
+        ),
+      }))
+      .map((item) => ({
+        ...item,
+        fit:
+          item.candidate.score -
+          item.distance * 42 +
+          item.variety * (track.id === "roulette" ? 1.35 : 1.05),
       }))
       .sort((a, b) => {
         const aBucket = a.distance <= radiusKm ? 0 : 1;
         const bBucket = b.distance <= radiusKm ? 0 : 1;
-        const aFit = a.candidate.score - a.distance * 42;
-        const bFit = b.candidate.score - b.distance * 42;
         return (
           aBucket - bBucket ||
-          bFit - aFit ||
+          b.fit - a.fit ||
           a.distance - b.distance
         );
-      })
-      .slice(0, count);
+      });
+    const items = pickDiverseRouteItems(rankedItems, count);
     const selectedStops = items.map(({ candidate }) => candidate.stop);
     const totalDistance = estimateRouteDistanceKm(
       orderStopsByRoute(selectedStops, startCoordinate),
@@ -1918,6 +1949,10 @@ function buildCompactRoutePool(
     const outsideCount = items.filter((item) => item.distance > radiusKm).length;
     const spanDistance = maxPairwiseDistanceKm(selectedStops);
     const overBudget = Math.max(0, totalDistance - walkingBudgetKm);
+    const generationBonus = deterministicJitter(
+      `${track.id}:${generation}:${anchor.stop.restaurantId}:cluster`,
+      track.id === "roulette" ? 340 : track.id === "crawl" ? 260 : 230,
+    );
     return {
       items: items.map(({ candidate }) => candidate),
       score:
@@ -1926,11 +1961,83 @@ function buildCompactRoutePool(
         overBudget * 140 -
         spanDistance * 42 -
         outsideCount * 95 -
-        Math.max(0, farthest - radiusKm) * 70,
+        Math.max(0, farthest - radiusKm) * 70 -
+        repeatedBucketPenalty(selectedStops) +
+        generationBonus,
     };
   });
 
   return clusters.sort((a, b) => b.score - a.score)[0]?.items ?? mapped;
+}
+
+function buildVariedAnchors(
+  scored: Array<{ stop: QuestStop; score: number }>,
+  count: QuestLength,
+  generation: number,
+): Array<{ stop: QuestStop; score: number }> {
+  const anchorLimit = Math.min(scored.length, Math.max(48, count * 14));
+  const topAnchors = scored.slice(0, anchorLimit);
+  const windowSize = Math.min(anchorLimit, Math.max(18, count * 4));
+  const step = Math.max(7, count + 2);
+  const start = (generation * step) % anchorLimit;
+  const seen = new Set<string>();
+  const seededAnchors = Array.from({ length: windowSize }, (_, index) => {
+    return topAnchors[(start + index) % anchorLimit];
+  });
+
+  return seededAnchors
+    .filter(({ stop }) => {
+      const key = stopKey(stop);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, Math.min(54, anchorLimit));
+}
+
+function pickDiverseRouteItems<T extends {
+  candidate: { stop: QuestStop; score: number };
+  distance: number;
+}>(
+  rankedItems: T[],
+  count: QuestLength,
+): T[] {
+  const selected: T[] = [];
+  const seenCuisines = new Set<string>();
+  const seenAreas = new Set<string>();
+
+  for (const item of rankedItems) {
+    if (selected.length >= count) break;
+    const cuisine = cuisineBucket(item.candidate.stop);
+    const area = areaBucket(item.candidate.stop);
+    const repeatsCuisine = seenCuisines.has(cuisine);
+    const repeatsArea = seenAreas.has(area);
+
+    if (
+      selected.length < Math.ceil(count * 0.66) &&
+      repeatsCuisine &&
+      repeatsArea
+    ) {
+      continue;
+    }
+
+    selected.push(item);
+    seenCuisines.add(cuisine);
+    seenAreas.add(area);
+  }
+
+  if (selected.length < count) {
+    const selectedKeys = new Set(selected.map((item) => stopKey(item.candidate.stop)));
+    for (const item of rankedItems) {
+      if (selected.length >= count) break;
+      const key = stopKey(item.candidate.stop);
+      if (selectedKeys.has(key)) continue;
+      selected.push(item);
+      selectedKeys.add(key);
+    }
+  }
+
+  return selected.slice(0, count);
 }
 
 function scoreStop(
@@ -1958,13 +2065,74 @@ function scoreStop(
       preferenceScore * 0.7 +
       socialScore +
       mapScore +
-      randomScore * 1.2
+      randomScore * 1.8
     );
   }
   if (track.id === "roulette") {
-    return randomScore * 4.4 + preferenceScore * 0.8 + socialScore + mapScore;
+    return randomScore * 5 + preferenceScore * 0.8 + socialScore + mapScore;
   }
-  return preferenceScore + socialScore + mapScore + randomScore * 1.4;
+  return preferenceScore + socialScore + mapScore + randomScore * 2.8;
+}
+
+function repeatedBucketPenalty(stops: QuestStop[]): number {
+  return (
+    bucketRepeatPenalty(stops.map(cuisineBucket), 56) +
+    bucketRepeatPenalty(stops.map(areaBucket), 32)
+  );
+}
+
+function bucketRepeatPenalty(keys: string[], amount: number): number {
+  const counts = new Map<string, number>();
+  for (const key of keys) {
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  let penalty = 0;
+  counts.forEach((count) => {
+    if (count > 1) {
+      penalty += (count - 1) * amount;
+    }
+  });
+  return penalty;
+}
+
+function cuisineBucket(stop: QuestStop): string {
+  const normalizedCuisines = stop.cuisines.map(normalize);
+  const knownFamily = [
+    "japanese",
+    "korean",
+    "thai",
+    "chinese",
+    "filipino",
+    "indian",
+    "italian",
+    "mexican",
+    "seafood",
+    "sushi",
+    "ramen",
+    "pizza",
+    "cocktail",
+    "wine",
+    "bar",
+    "bakery",
+    "coffee",
+    "dessert",
+  ].find((family) =>
+    normalizedCuisines.some((cuisine) => cuisine.includes(family)),
+  );
+
+  return knownFamily ?? normalizedCuisines[0] ?? stop.restaurantId;
+}
+
+function areaBucket(stop: QuestStop): string {
+  const label = stop.location?.label;
+  if (label) {
+    return normalize(label.split("/")[0] ?? label);
+  }
+  if (stop.coordinate) {
+    return `${stop.coordinate.latitude.toFixed(2)}:${stop.coordinate.longitude.toFixed(2)}`;
+  }
+  return "area-pending";
 }
 
 function orderStopsByRoute(
