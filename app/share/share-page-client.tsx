@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 
 import {
   decodeShareSnapshot,
@@ -65,11 +66,26 @@ export function SharePageClient({
   }, [encoded, id, initialSnapshot]);
 
   if (loading) {
-    return <LoadingSharePage />;
+    return (
+      <ShareStatePage
+        body="Pulling the ordered itinerary and route details."
+        title="Loading this quest"
+      />
+    );
   }
 
   if (!snapshot) {
-    return <InvalidSharePage />;
+    return (
+      <ShareStatePage
+        action={
+          <Link className={secondaryButtonClassName} href="/">
+            Build a quest
+          </Link>
+        }
+        body="Build a fresh quest to generate a new itinerary link."
+        title="This share link expired"
+      />
+    );
   }
 
   return <ShareItinerary snapshot={snapshot} />;
@@ -87,153 +103,249 @@ function ShareItinerary({ snapshot }: { snapshot: ShareQuestSnapshot }) {
       }).format(generatedDate);
 
   return (
-    <main className="min-h-screen bg-[#f7f3ea] px-4 py-5 text-[#17130f] sm:px-6 sm:py-8">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
-        <header className="rounded-[28px] border border-[#dfd5c2] bg-[#fffaf1] p-5 shadow-[0_18px_50px_rgba(41,31,18,0.12)] sm:p-7">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-[#17130f] px-3 py-1 text-[0.68rem] font-black uppercase tracking-[0.18em] text-[#fffaf1]">
-              Passport Quest
-            </span>
-            <span className="rounded-full border border-[#d7c8af] bg-white px-3 py-1 text-[0.68rem] font-black uppercase tracking-[0.18em] text-[#6e5d46]">
-              {snapshot.trackLabel}
-            </span>
-          </div>
+    <main className="min-h-screen overflow-hidden bg-background-darker text-foreground">
+      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(135deg,rgb(var(--surface-bg-darker))_0%,rgb(var(--surface-bg))_52%,rgb(var(--surface-container-low))_100%)]" />
+      <div className="pointer-events-none fixed inset-0 opacity-[0.18] [background-image:linear-gradient(rgba(255,255,255,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.08)_1px,transparent_1px)] [background-size:72px_72px]" />
 
-          <h1 className="text-balance text-3xl font-black leading-[0.95] tracking-[-0.02em] text-[#1d1710] sm:text-5xl">
-            {snapshot.title}
-          </h1>
-          <p className="mt-4 max-w-2xl text-sm font-semibold leading-6 text-[#665744] sm:text-base">
-            {snapshot.stopCount} stops, {snapshot.windowLabel}.{" "}
-            {snapshot.routeSummary}
+      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-5 px-4 py-5 sm:px-6 sm:py-8 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+        <section className="overflow-hidden rounded-3xl border border-white/10 bg-surface-low shadow-[0_24px_80px_rgb(0_0_0/0.45)]">
+          <header className="border-b border-white/10 bg-surface p-5 sm:p-7">
+            <div className="flex flex-wrap items-center gap-2">
+              <TagPill tone="dark">Passport Quest</TagPill>
+              <TagPill tone="purple">{snapshot.trackLabel}</TagPill>
+              <TagPill tone={snapshot.completed ? "success" : "yellow"}>
+                {snapshot.completed ? "Reward unlocked" : "Reward preview"}
+              </TagPill>
+            </div>
+
+            <div className="mt-7 grid gap-6 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-end">
+              <div>
+                <p className="text-sm font-semibold text-primary-bright">
+                  {snapshot.stopCount} stops, {snapshot.windowLabel}
+                </p>
+                <h1 className="mt-3 max-w-3xl text-balance text-4xl font-black leading-[0.94] tracking-tight text-foreground sm:text-6xl">
+                  {snapshot.title}
+                </h1>
+                <p className="mt-4 max-w-2xl text-sm font-medium leading-6 text-muted sm:text-base">
+                  {snapshot.routeSummary}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-primary/30 bg-primary/10 p-4">
+                <p className="text-xs font-bold text-primary-bright">Challenge</p>
+                <p className="mt-1 break-all text-lg font-black text-foreground">
+                  {snapshot.challengeId}
+                </p>
+                <p className="mt-3 text-xs font-semibold text-muted">
+                  Generated {generatedAt}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              {snapshot.directionsUrl ? (
+                <a
+                  className={primaryButtonClassName}
+                  href={snapshot.directionsUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  Open Google Maps route
+                </a>
+              ) : null}
+              <Link className={secondaryButtonClassName} href="/">
+                Build another quest
+              </Link>
+            </div>
+          </header>
+
+          <section className="grid gap-3 p-5 sm:p-6 md:grid-cols-3">
+            <Metric label="Cadence" value={snapshot.cadenceLabel} />
+            <Metric label="Reward" tone="success" value={snapshot.rewardLabel} />
+            <Metric
+              label="Route"
+              value={snapshot.routeSummary.split(",")[0] ?? "Mapped"}
+            />
+          </section>
+
+          <section className="px-5 pb-5 sm:px-6 sm:pb-6">
+            <div className="rounded-3xl border border-white/10 bg-background-darker p-4 sm:p-5">
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-primary-bright">
+                    Route order
+                  </p>
+                  <h2 className="mt-1 text-xl font-black text-foreground">
+                    Ordered itinerary
+                  </h2>
+                </div>
+                <span className="rounded-full border border-success/30 bg-success/10 px-3 py-1 text-xs font-bold text-success">
+                  {snapshot.stopCount} stops
+                </span>
+              </div>
+
+              <ol className="relative space-y-3 before:absolute before:bottom-8 before:left-[1.35rem] before:top-8 before:w-px before:bg-primary/45">
+                {snapshot.stops.map((stop) => (
+                  <li
+                    className="relative grid grid-cols-[2.75rem_1fr] gap-3 rounded-2xl border border-white/10 bg-surface-low p-3 transition hover:border-primary/40"
+                    key={`${stop.index}-${stop.name}`}
+                  >
+                    <span className="relative z-10 flex h-11 w-11 items-center justify-center rounded-full border border-primary-bright/50 bg-primary text-base font-black text-primary-foreground shadow-[0_0_0_6px_rgb(var(--surface-container-low))]">
+                      {stop.index}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                        <h3 className="text-lg font-black leading-tight text-foreground">
+                          {stop.name}
+                        </h3>
+                        <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-bold text-primary-bright">
+                          {stop.legLabel}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm font-bold text-muted">
+                        {stop.cuisines}
+                      </p>
+                      <p className="mt-2 text-sm leading-5 text-subtle">
+                        {stop.addressLine ?? stop.locationLabel}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </section>
+        </section>
+
+        <aside className="rounded-3xl border border-white/10 bg-surface-low p-5 shadow-[0_24px_80px_rgb(0_0_0/0.35)] lg:sticky lg:top-6">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-xl font-black text-primary-foreground">
+            PQ
+          </div>
+          <h2 className="mt-5 text-2xl font-black tracking-tight text-foreground">
+            Quest pass
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-muted">
+            Share this route with the group, then open Maps when everyone is
+            ready to move.
           </p>
 
-          <div className="mt-5 grid gap-2 text-sm sm:grid-cols-3">
-            <Metric label="Cadence" value={snapshot.cadenceLabel} />
-            <Metric label="Reward" value={snapshot.rewardLabel} />
-            <Metric label="Challenge" value={snapshot.challengeId} />
+          <div className="mt-5 rounded-2xl border border-success/20 bg-success/10 p-4">
+            <p className="text-xs font-bold text-success">Rewards status</p>
+            <p className="mt-1 text-lg font-black text-foreground">
+              {snapshot.rewardLabel}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted">
+              Preview only until a merchant issues the reward.
+            </p>
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-3">
+          <div className="mt-5 grid gap-2">
             {snapshot.directionsUrl ? (
               <a
-                className="inline-flex h-11 items-center justify-center rounded-full bg-[#f5c243] px-5 text-sm font-black text-[#1c160f] shadow-[0_10px_24px_rgba(92,70,21,0.18)] transition hover:translate-y-[-1px]"
+                className={primaryButtonClassName}
                 href={snapshot.directionsUrl}
                 rel="noreferrer"
                 target="_blank"
               >
-                Open Google Maps route
+                Open route
               </a>
             ) : null}
-            <Link
-              className="inline-flex h-11 items-center justify-center rounded-full border border-[#d8ccb8] bg-white px-5 text-sm font-black text-[#2b2117]"
-              href="/"
-            >
-              Build another quest
+            <Link className={secondaryButtonClassName} href="/">
+              Build your own
             </Link>
           </div>
-
-          <p className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-[#917d60]">
-            Generated {generatedAt}
-          </p>
-        </header>
-
-        <section className="rounded-[28px] border border-[#dfd5c2] bg-white p-4 shadow-[0_18px_50px_rgba(41,31,18,0.1)] sm:p-5">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-sm font-black uppercase tracking-[0.18em] text-[#4b3c29]">
-              Ordered itinerary
-            </h2>
-            <span className="text-xs font-black uppercase tracking-[0.14em] text-[#9a876b]">
-              {snapshot.stopCount} stops
-            </span>
-          </div>
-
-          <ol className="space-y-3">
-            {snapshot.stops.map((stop) => (
-              <li
-                className="grid grid-cols-[2.75rem_1fr] gap-3 rounded-2xl border border-[#eee5d6] bg-[#fffaf1] p-3"
-                key={`${stop.index}-${stop.name}`}
-              >
-                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#17130f] text-base font-black text-[#fffaf1]">
-                  {stop.index}
-                </span>
-                <div>
-                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <h3 className="text-lg font-black leading-tight text-[#211811]">
-                      {stop.name}
-                    </h3>
-                    <span className="text-xs font-black uppercase tracking-[0.14em] text-[#9b7040]">
-                      {stop.legLabel}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm font-bold text-[#5d4e3c]">
-                    {stop.cuisines}
-                  </p>
-                  <p className="mt-2 text-sm leading-5 text-[#6f604d]">
-                    {stop.addressLine ?? stop.locationLabel}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </section>
-
-        <p className="text-center text-xs font-bold uppercase tracking-[0.16em] text-[#8c7a61]">
-          Rewards are shown as a preview until a merchant issues them.
-        </p>
+        </aside>
       </div>
     </main>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({
+  label,
+  tone = "default",
+  value,
+}: {
+  label: string;
+  tone?: "default" | "success";
+  value: string;
+}) {
   return (
-    <div className="rounded-2xl border border-[#eee1cf] bg-white px-4 py-3">
-      <div className="text-[0.64rem] font-black uppercase tracking-[0.18em] text-[#9a876b]">
+    <div
+      className={
+        tone === "success"
+          ? "rounded-2xl border border-success/25 bg-success/10 px-4 py-3"
+          : "rounded-2xl border border-white/10 bg-background-darker px-4 py-3"
+      }
+    >
+      <div
+        className={
+          tone === "success"
+            ? "text-xs font-bold text-success"
+            : "text-xs font-bold text-primary-bright"
+        }
+      >
         {label}
       </div>
-      <div className="mt-1 text-sm font-black text-[#211811]">{value}</div>
+      <div className="mt-1 text-sm font-black text-foreground">{value}</div>
     </div>
   );
 }
 
-function LoadingSharePage() {
+function TagPill({
+  children,
+  tone,
+}: {
+  children: ReactNode;
+  tone: "dark" | "purple" | "success" | "yellow";
+}) {
+  const toneClassName =
+    tone === "dark"
+      ? "border-white/10 bg-background-darker text-foreground"
+      : tone === "purple"
+        ? "border-primary/30 bg-primary/15 text-primary-bright"
+        : tone === "success"
+          ? "border-success/30 bg-success/10 text-success"
+          : "border-brand-yellow/35 bg-brand-yellow/10 text-brand-yellow";
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f7f3ea] px-4 py-8 text-[#17130f]">
-      <section className="w-full max-w-md rounded-[28px] border border-[#dfd5c2] bg-[#fffaf1] p-6 text-center shadow-[0_18px_50px_rgba(41,31,18,0.12)]">
-        <span className="mx-auto inline-flex rounded-full bg-[#17130f] px-3 py-1 text-[0.68rem] font-black uppercase tracking-[0.18em] text-[#fffaf1]">
+    <span
+      className={`inline-flex h-7 items-center rounded-full border px-3 text-[11px] font-black ${toneClassName}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ShareStatePage({
+  action,
+  body,
+  title,
+}: {
+  action?: ReactNode;
+  body: string;
+  title: string;
+}) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-background-darker px-4 py-8 text-foreground">
+      <section className="w-full max-w-md rounded-3xl border border-white/10 bg-surface-low p-6 text-center shadow-[0_24px_80px_rgb(0_0_0/0.45)]">
+        <span className="mx-auto inline-flex rounded-full border border-primary/30 bg-primary/15 px-3 py-1 text-[11px] font-black text-primary-bright">
           Passport Quest
         </span>
-        <h1 className="mt-4 text-3xl font-black leading-none tracking-[-0.02em]">
-          Loading this quest.
+        <h1 className="mt-4 text-3xl font-black leading-none tracking-tight">
+          {title}
         </h1>
-        <p className="mt-3 text-sm font-semibold leading-6 text-[#665744]">
-          Pulling the ordered itinerary and route details.
+        <p className="mt-3 text-sm font-semibold leading-6 text-muted">
+          {body}
         </p>
+        {action ? (
+          <div className="mt-5 flex justify-center">{action}</div>
+        ) : null}
       </section>
     </main>
   );
 }
 
-function InvalidSharePage() {
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f7f3ea] px-4 py-8 text-[#17130f]">
-      <section className="w-full max-w-md rounded-[28px] border border-[#dfd5c2] bg-[#fffaf1] p-6 text-center shadow-[0_18px_50px_rgba(41,31,18,0.12)]">
-        <span className="mx-auto inline-flex rounded-full bg-[#17130f] px-3 py-1 text-[0.68rem] font-black uppercase tracking-[0.18em] text-[#fffaf1]">
-          Passport Quest
-        </span>
-        <h1 className="mt-4 text-3xl font-black leading-none tracking-[-0.02em]">
-          This share link expired.
-        </h1>
-        <p className="mt-3 text-sm font-semibold leading-6 text-[#665744]">
-          Build a fresh quest to generate a new itinerary link.
-        </p>
-        <Link
-          className="mt-5 inline-flex h-11 items-center justify-center rounded-full bg-[#f5c243] px-5 text-sm font-black text-[#1c160f]"
-          href="/"
-        >
-          Build a quest
-        </Link>
-      </section>
-    </main>
-  );
-}
+const primaryButtonClassName =
+  "inline-flex h-11 items-center justify-center rounded-full bg-brand-yellow px-5 text-sm font-black text-background-darker shadow-[0_14px_34px_rgb(var(--brand-yellow)/0.18)] transition hover:translate-y-[-1px] hover:opacity-95";
+
+const secondaryButtonClassName =
+  "inline-flex h-11 items-center justify-center rounded-full border border-white/14 bg-surface px-5 text-sm font-black text-foreground transition hover:border-primary/60 hover:bg-primary/10";
