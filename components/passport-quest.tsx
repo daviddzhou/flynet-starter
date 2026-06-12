@@ -35,6 +35,7 @@ type ChallengeTrack = {
   stopOptions: QuestLength[];
   defaultStops: QuestLength;
   reward: string;
+  baseFlyReward: number;
   icon: "compass" | "dice" | "glass";
 };
 
@@ -160,6 +161,7 @@ const CHALLENGE_TRACKS: ChallengeTrack[] = [
     stopOptions: [3, 4, 5, 6, 7],
     defaultStops: 5,
     reward: "Simulated 50 FLY unlock after the final check-in",
+    baseFlyReward: 50,
     icon: "compass",
   },
   {
@@ -170,6 +172,7 @@ const CHALLENGE_TRACKS: ChallengeTrack[] = [
     stopOptions: [3, 4, 5, 6, 7],
     defaultStops: 5,
     reward: "Simulated mystery bonus after every stop is checked in",
+    baseFlyReward: 75,
     icon: "dice",
   },
   {
@@ -180,6 +183,7 @@ const CHALLENGE_TRACKS: ChallengeTrack[] = [
     stopOptions: [4, 5, 6, 7],
     defaultStops: 5,
     reward: "Simulated group passport stamp after the last stop",
+    baseFlyReward: 60,
     icon: "glass",
   },
 ];
@@ -206,6 +210,7 @@ export function PassportQuest({
   const [questLength, setQuestLength] = useState<QuestLength>(5);
   const [durationMinutes, setDurationMinutes] = useState(180);
   const [generation, setGeneration] = useState(0);
+  const [challengeVersion, setChallengeVersion] = useState(1);
   const [manualStartPoint, setManualStartPoint] = useState<RoutePoint | null>(
     null,
   );
@@ -327,6 +332,17 @@ export function PassportQuest({
   ).length;
   const completed = selectedStops.length > 0 && checkedCount === selectedStops.length;
   const cadenceLabel = buildCadenceLabel(selectedStops.length, durationMinutes);
+  const rewardFly = buildRewardFly(
+    activeTrack,
+    selectedStops.length,
+    durationMinutes,
+  );
+  const mockChallengeId = buildMockChallengeId(
+    activeTrack.id,
+    selectedStops.length,
+    durationMinutes,
+    challengeVersion,
+  );
 
   useEffect(() => {
     setCheckedStopKeys([]);
@@ -359,6 +375,8 @@ export function PassportQuest({
 
   function generateQuest() {
     setGeneration((current) => current + 1);
+    setChallengeVersion((current) => current + 1);
+    setCheckedStopKeys([]);
   }
 
   function selectTrack(nextTrackId: ChallengeTrackId) {
@@ -374,6 +392,8 @@ export function PassportQuest({
   function regenerateTrack(nextTrackId: ChallengeTrackId) {
     selectTrack(nextTrackId);
     setGeneration((current) => current + 1);
+    setChallengeVersion((current) => current + 1);
+    setCheckedStopKeys([]);
   }
 
   function selectStartPreset(preset: StartPointPreset) {
@@ -562,6 +582,16 @@ export function PassportQuest({
               onReset={resetCheckIns}
             />
 
+            <MockChallengeCard
+              challengeId={mockChallengeId}
+              track={activeTrack}
+              stopCount={selectedStops.length}
+              windowLabel={formatMinutes(durationMinutes)}
+              cadenceLabel={cadenceLabel}
+              rewardFly={rewardFly}
+              completed={completed}
+            />
+
             <div className="flex flex-wrap gap-2">
               {activePreferences.length > 0 ? (
                 activePreferences.slice(0, 8).map((preference) => (
@@ -579,11 +609,11 @@ export function PassportQuest({
               <button
                 type="button"
                 onClick={generateQuest}
-                title="Reroll route with the current settings"
+                title="Generate a fresh mock challenge with the current settings"
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:bg-primary-dim"
               >
                 <RefreshIcon className="h-4 w-4" />
-                Reroll route
+                Generate challenge
               </button>
               {directionsUrl ? (
                 <a
@@ -633,6 +663,9 @@ export function PassportQuest({
           totalCount={selectedStops.length}
           questTitle={`${activeTrack.label}, ${selectedStops.length} stops`}
           rewardPreview={activeTrack.reward}
+          challengeId={mockChallengeId}
+          rewardFly={rewardFly}
+          recipientName={activeProfileName}
         />
       </div>
     </section>
@@ -1104,6 +1137,90 @@ function CheckInProgress({
           </button>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function MockChallengeCard({
+  challengeId,
+  track,
+  stopCount,
+  windowLabel,
+  cadenceLabel,
+  rewardFly,
+  completed,
+}: {
+  challengeId: string;
+  track: ChallengeTrack;
+  stopCount: number;
+  windowLabel: string;
+  cadenceLabel: string;
+  rewardFly: number;
+  completed: boolean;
+}) {
+  const steps = [
+    "Profile matched",
+    "Route generated",
+    completed ? "FLY preview unlocked" : "Reward armed",
+  ];
+
+  return (
+    <div className="rounded-xl border border-primary/25 bg-primary/10 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-medium text-primary-bright">
+            Mock challenge generation
+          </p>
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            {challengeId}
+          </p>
+        </div>
+        <Tag tone={completed ? "success" : "primary"}>
+          {completed ? "Completed" : "Generated"}
+        </Tag>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg border border-white/10 bg-background-darker p-2">
+          <p className="text-subtle">Challenge</p>
+          <p className="mt-0.5 font-semibold text-foreground">
+            {track.label}
+          </p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-background-darker p-2">
+          <p className="text-subtle">Reward</p>
+          <p className="mt-0.5 font-semibold text-success">
+            +{rewardFly} FLY
+          </p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-background-darker p-2">
+          <p className="text-subtle">Stops</p>
+          <p className="mt-0.5 font-semibold text-foreground">
+            {stopCount} stops
+          </p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-background-darker p-2">
+          <p className="text-subtle">Window</p>
+          <p className="mt-0.5 font-semibold text-foreground">
+            {windowLabel}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {steps.map((step) => (
+          <span
+            key={step}
+            className="inline-flex h-7 items-center rounded-full border border-white/10 bg-background-darker px-2.5 text-[11px] font-semibold text-muted"
+          >
+            {step}
+          </span>
+        ))}
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-muted">
+        {cadenceLabel} cadence. This is a local demo receipt, no Rewards API
+        issuance happens here.
+      </p>
     </div>
   );
 }
@@ -1950,6 +2067,27 @@ function formatWindowHoursInput(minutes: number): string {
 
 function formatCoordinate(coordinate: Coordinate): string {
   return `${coordinate.latitude.toFixed(4)}, ${coordinate.longitude.toFixed(4)}`;
+}
+
+function buildRewardFly(
+  track: ChallengeTrack,
+  stopCount: number,
+  minutes: number,
+): number {
+  const stopBonus = Math.max(0, stopCount - 5) * 10;
+  const durationBonus = minutes >= 24 * 60 ? 15 : 0;
+  return track.baseFlyReward + stopBonus + durationBonus;
+}
+
+function buildMockChallengeId(
+  trackId: ChallengeTrackId,
+  stopCount: number,
+  minutes: number,
+  version: number,
+): string {
+  const trackCode = trackId.slice(0, 3).toUpperCase();
+  const windowCode = minutes >= 7 * 24 * 60 ? "WEEK" : `${Math.round(minutes / 60)}H`;
+  return `PQ-${trackCode}-${stopCount}-${windowCode}-${String(version).padStart(2, "0")}`;
 }
 
 function buildCadenceLabel(stopCount: number, minutes: number): string {

@@ -8,22 +8,36 @@ export function RewardsPanel({
   totalCount,
   questTitle,
   rewardPreview,
+  challengeId,
+  rewardFly,
+  recipientName,
 }: {
   completed: boolean;
   completedCount: number;
   totalCount: number;
   questTitle: string;
   rewardPreview: string;
+  challengeId: string;
+  rewardFly: number;
+  recipientName: string;
 }) {
+  const payoutReference = `mock_fly_${challengeId.toLowerCase().replaceAll("-", "_")}`;
+
   return (
-    <aside className="rounded-3xl border border-white/10 bg-surface-low p-5">
+    <aside
+      className={`rounded-3xl border p-5 transition ${
+        completed
+          ? "border-success/30 bg-success/10"
+          : "border-white/10 bg-surface-low"
+      }`}
+    >
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.14em] text-subtle">
             Rewards preview
           </p>
           <h2 className="mt-1 text-xl font-semibold text-foreground">
-            {completed ? "Reward unlocked" : "Reward armed"}
+            {completed ? `+${rewardFly} FLY unlocked` : "Reward armed"}
           </h2>
         </div>
         <Tag tone={completed ? "success" : "primary"}>
@@ -32,11 +46,14 @@ export function RewardsPanel({
       </div>
 
       <div className="mt-5 grid gap-3">
+        <Metric label="Challenge" value={challengeId} />
         <Metric label="Quest" value={questTitle} />
         <Metric
           label="Check-ins"
           value={`${completedCount}/${totalCount} simulated`}
         />
+        <Metric label="Recipient" value={recipientName} />
+        <Metric label="Payout" value={`+${rewardFly} FLY`} />
         <Metric label="Unlock" value={rewardPreview} />
         <Metric label="API action" value="No live issuance" />
       </div>
@@ -50,12 +67,13 @@ export function RewardsPanel({
       >
         <p className="text-sm font-medium">
           {completed
-            ? "Demo state: every planned stop has a simulated check-in."
+            ? `Mock transfer posted: +${rewardFly} FLY to ${recipientName}.`
             : "Mark each stop checked in to preview the Rewards API moment without moving FLY."}
         </p>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          A production version would issue this only after verified check-ins and
-          an explicit merchant-side confirmation.
+          {completed
+            ? `Reference ${payoutReference}. Production would issue only after verified check-ins and merchant confirmation.`
+            : "A production version would issue this only after verified check-ins and an explicit merchant-side confirmation."}
         </p>
       </div>
     </aside>
