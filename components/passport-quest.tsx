@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Map as LeafletMap } from "leaflet";
 import type { Quest, QuestStop } from "../lib/quest";
@@ -44,6 +44,13 @@ type QuestWindowPreset = {
   detail: string;
 };
 
+type StartPointPreset = {
+  id: string;
+  label: string;
+  detail: string;
+  coordinate: Coordinate;
+};
+
 const DEFAULT_GUEST_PROFILE: GuestProfile = {
   name: "Guest explorer",
   preferences: ["Italian", "Cocktails", "Dessert"],
@@ -73,6 +80,39 @@ const QUEST_WINDOW_PRESETS: QuestWindowPreset[] = [
   { minutes: 300, label: "5h", detail: "Half day" },
   { minutes: 24 * 60, label: "1 day", detail: "Day pass" },
   { minutes: 7 * 24 * 60, label: "1 week", detail: "Passport" },
+];
+
+const START_POINT_PRESETS: StartPointPreset[] = [
+  {
+    id: "soho",
+    label: "SoHo",
+    detail: "Downtown",
+    coordinate: { latitude: 40.7243, longitude: -74.0018 },
+  },
+  {
+    id: "union-square",
+    label: "Union Sq",
+    detail: "Central",
+    coordinate: { latitude: 40.7359, longitude: -73.9911 },
+  },
+  {
+    id: "east-village",
+    label: "East Village",
+    detail: "Night out",
+    coordinate: { latitude: 40.7265, longitude: -73.9815 },
+  },
+  {
+    id: "williamsburg",
+    label: "Williamsburg",
+    detail: "Brooklyn",
+    coordinate: { latitude: 40.7143, longitude: -73.9614 },
+  },
+  {
+    id: "midtown",
+    label: "Midtown",
+    detail: "Hotel",
+    coordinate: { latitude: 40.7549, longitude: -73.984 },
+  },
 ];
 
 const PREFERENCE_OPTIONS = [
@@ -166,6 +206,10 @@ export function PassportQuest({
   const [questLength, setQuestLength] = useState<QuestLength>(5);
   const [durationMinutes, setDurationMinutes] = useState(180);
   const [generation, setGeneration] = useState(0);
+  const [manualStartPoint, setManualStartPoint] = useState<RoutePoint | null>(
+    null,
+  );
+  const [isPickingStartPoint, setIsPickingStartPoint] = useState(false);
   const [checkedStopKeys, setCheckedStopKeys] = useState<string[]>([]);
 
   const activeTrack =
@@ -180,6 +224,7 @@ export function PassportQuest({
       ? "Blackbird taste profile"
       : "Blackbird member"
     : guestProfile.name;
+  const startCoordinate = manualStartPoint?.coordinate ?? null;
 
   useEffect(() => {
     if (!signedIn && profileMode === "member") setProfileMode("guest");
@@ -259,10 +304,22 @@ export function PassportQuest({
         durationMinutes,
         generation,
         preferences: activePreferences,
+        startCoordinate,
       }).map((stop, index) => ({ ...stop, order: index + 1 })),
-    [activePreferences, activeTrack, durationMinutes, generation, quest.stops, questLength],
+    [
+      activePreferences,
+      activeTrack,
+      durationMinutes,
+      generation,
+      quest.stops,
+      questLength,
+      startCoordinate,
+    ],
   );
-  const metrics = useMemo(() => buildRouteMetrics(selectedStops), [selectedStops]);
+  const metrics = useMemo(
+    () => buildRouteMetrics(selectedStops, manualStartPoint),
+    [manualStartPoint, selectedStops],
+  );
   const directionsUrl = buildDirectionsUrl(selectedStops, metrics.startPoint);
   const selectedStopSignature = selectedStops.map(stopKey).join("|");
   const checkedCount = selectedStops.filter((stop) =>
@@ -302,6 +359,41 @@ export function PassportQuest({
   function generateQuest() {
     setGeneration((current) => current + 1);
   }
+
+  function selectTrack(nextTrackId: ChallengeTrackId) {
+    const nextTrack =
+      CHALLENGE_TRACKS.find((track) => track.id === nextTrackId) ??
+      CHALLENGE_TRACKS[0];
+    setTrackId(nextTrackId);
+    if (!nextTrack.stopOptions.includes(questLength)) {
+      setQuestLength(nextTrack.defaultStops);
+    }
+  }
+
+  function regenerateTrack(nextTrackId: ChallengeTrackId) {
+    selectTrack(nextTrackId);
+    setGeneration((current) => current + 1);
+  }
+
+  function selectStartPreset(preset: StartPointPreset) {
+    setManualStartPoint(startPointFromPreset(preset));
+    setIsPickingStartPoint(false);
+  }
+
+  function useAutoStartPoint() {
+    setManualStartPoint(null);
+    setIsPickingStartPoint(false);
+  }
+
+  const handleMapStartPointPick = useCallback((coordinate: Coordinate) => {
+    setManualStartPoint({
+      kind: "start",
+      name: "Map start",
+      label: "Map start",
+      coordinate,
+    });
+    setIsPickingStartPoint(false);
+  }, []);
 
   function checkInStop(stop: QuestStop) {
     const key = stopKey(stop);
@@ -367,30 +459,53 @@ export function PassportQuest({
 
             <ControlGroup label="Challenge track">
               <div className="grid gap-2">
-                {CHALLENGE_TRACKS.map((track) => (
-                  <button
-                    key={track.id}
-                    type="button"
-                    onClick={() => setTrackId(track.id)}
-                    className={`rounded-xl border px-3 py-3 text-left transition duration-150 ease-standard ${
-                      trackId === track.id
-                        ? "border-primary bg-primary/15 text-foreground"
-                        : "border-white/10 bg-background-darker text-muted hover:border-white/20 hover:bg-surface"
-                    }`}
-                  >
-                    <span className="flex items-start gap-3">
-                      <TrackIcon icon={track.icon} className="mt-0.5 h-5 w-5 shrink-0" />
-                      <span>
-                        <span className="block text-sm font-semibold text-foreground">
-                          {track.label}
+                {CHALLENGE_TRACKS.map((track) => {
+                  const selected = trackId === track.id;
+                  return (
+                    <div
+                      key={track.id}
+                      className={`flex items-stretch gap-2 rounded-xl border p-2 transition duration-150 ease-standard ${
+                        selected
+                          ? "border-primary bg-primary/15 text-foreground"
+                          : "border-white/10 bg-background-darker text-muted hover:border-white/20 hover:bg-surface"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => selectTrack(track.id)}
+                        className="min-w-0 flex-1 rounded-lg px-1 py-1 text-left"
+                      >
+                        <span className="flex items-start gap-3">
+                          <TrackIcon
+                            icon={track.icon}
+                            className="mt-0.5 h-5 w-5 shrink-0"
+                          />
+                          <span>
+                            <span className="block text-sm font-semibold text-foreground">
+                              {track.label}
+                            </span>
+                            <span className="mt-1 block text-xs leading-relaxed">
+                              {track.description}
+                            </span>
+                          </span>
                         </span>
-                        <span className="mt-1 block text-xs leading-relaxed">
-                          {track.description}
-                        </span>
-                      </span>
-                    </span>
-                  </button>
-                ))}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => regenerateTrack(track.id)}
+                        title={`Regenerate ${track.label}`}
+                        aria-label={`Regenerate ${track.label}`}
+                        className={`grid h-10 w-10 shrink-0 place-items-center rounded-full border transition ${
+                          selected
+                            ? "border-primary/40 bg-primary/20 text-primary-bright hover:bg-primary/25"
+                            : "border-white/10 bg-white/5 text-muted hover:border-white/20 hover:text-foreground"
+                        }`}
+                      >
+                        <RefreshIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </ControlGroup>
 
@@ -418,10 +533,23 @@ export function PassportQuest({
               onDurationChange={setDurationMinutes}
             />
 
+            <StartPointControl
+              startPoint={manualStartPoint}
+              isPicking={isPickingStartPoint}
+              onAutoStart={useAutoStartPoint}
+              onPickFromMap={() =>
+                setIsPickingStartPoint((current) => !current)
+              }
+              onPresetStart={selectStartPreset}
+            />
+
             <div className="grid grid-cols-3 gap-2">
               <Metric label="Window" value={formatMinutes(durationMinutes)} />
               <Metric label="Distance" value={formatKm(metrics.totalKm)} />
-              <Metric label="Mapped" value={`${metrics.mappedStops}/${selectedStops.length}`} />
+              <Metric
+                label="Mapped"
+                value={`${metrics.mappedStops}/${selectedStops.length}`}
+              />
             </div>
 
             <CheckInProgress
@@ -480,6 +608,8 @@ export function PassportQuest({
           checkedStopKeys={checkedStopKeys}
           track={activeTrack}
           durationMinutes={durationMinutes}
+          isPickingStartPoint={isPickingStartPoint}
+          onStartPointPick={handleMapStartPointPick}
         />
       </div>
 
@@ -807,6 +937,92 @@ function QuestWindowControl({
   );
 }
 
+function StartPointControl({
+  startPoint,
+  isPicking,
+  onAutoStart,
+  onPickFromMap,
+  onPresetStart,
+}: {
+  startPoint: RoutePoint | null;
+  isPicking: boolean;
+  onAutoStart: () => void;
+  onPickFromMap: () => void;
+  onPresetStart: (preset: StartPointPreset) => void;
+}) {
+  return (
+    <ControlGroup label="Start point">
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={onAutoStart}
+          className={`min-h-14 rounded-xl border px-3 py-2 text-left transition duration-150 ease-standard ${
+            !startPoint && !isPicking
+              ? "border-primary bg-primary/15 text-foreground"
+              : "border-white/10 bg-background-darker text-muted hover:border-white/20 hover:bg-surface"
+          }`}
+        >
+          <span className="block text-sm font-semibold">Auto</span>
+          <span className="mt-0.5 block text-xs">Route edge</span>
+        </button>
+        {START_POINT_PRESETS.map((preset) => {
+          const selected = startPoint?.label === preset.label;
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => onPresetStart(preset)}
+              className={`min-h-14 rounded-xl border px-3 py-2 text-left transition duration-150 ease-standard ${
+                selected
+                  ? "border-primary bg-primary/15 text-foreground"
+                  : "border-white/10 bg-background-darker text-muted hover:border-white/20 hover:bg-surface"
+              }`}
+            >
+              <span className="block text-sm font-semibold">
+                {preset.label}
+              </span>
+              <span className="mt-0.5 block text-xs">{preset.detail}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-2 grid gap-2 rounded-xl border border-white/10 bg-background-darker p-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <MapPinIcon className="h-4 w-4 text-primary-bright" />
+          <span>{startPoint?.label ?? "Auto start"}</span>
+        </div>
+        <p className="text-xs text-subtle">
+          {startPoint ? formatCoordinate(startPoint.coordinate) : "Near first stop"}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onPickFromMap}
+            className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-3 text-xs font-semibold transition ${
+              isPicking
+                ? "border border-primary/40 bg-primary/20 text-primary-bright"
+                : "border border-white/10 text-muted hover:border-white/20 hover:text-foreground"
+            }`}
+          >
+            <MapPinIcon className="h-3.5 w-3.5" />
+            {isPicking ? "Cancel pick" : "Pick on map"}
+          </button>
+          {startPoint ? (
+            <button
+              type="button"
+              onClick={onAutoStart}
+              className="inline-flex h-8 items-center justify-center rounded-full border border-white/10 px-3 text-xs font-semibold text-muted transition hover:border-white/20 hover:text-foreground"
+            >
+              Reset
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </ControlGroup>
+  );
+}
+
 function ControlGroup({
   label,
   children,
@@ -894,12 +1110,16 @@ function LiveQuestMap({
   checkedStopKeys,
   track,
   durationMinutes,
+  isPickingStartPoint,
+  onStartPointPick,
 }: {
   stops: QuestStop[];
   metrics: RouteMetrics;
   checkedStopKeys: string[];
   track: ChallengeTrack;
   durationMinutes: number;
+  isPickingStartPoint: boolean;
+  onStartPointPick: (coordinate: Coordinate) => void;
 }) {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
@@ -924,6 +1144,18 @@ function LiveQuestMap({
         zoomControl: false,
       });
       mapRef.current = map;
+      map.getContainer().style.cursor = isPickingStartPoint
+        ? "crosshair"
+        : "";
+
+      if (isPickingStartPoint) {
+        map.on("click", (event: { latlng: { lat: number; lng: number } }) => {
+          onStartPointPick({
+            latitude: event.latlng.lat,
+            longitude: event.latlng.lng,
+          });
+        });
+      }
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution:
@@ -933,7 +1165,11 @@ function LiveQuestMap({
       L.control.zoom({ position: "bottomright" }).addTo(map);
 
       const latLngs = mappedStops.map(
-        (stop) => [stop.coordinate.latitude, stop.coordinate.longitude] as [number, number],
+        (stop) =>
+          [stop.coordinate.latitude, stop.coordinate.longitude] as [
+            number,
+            number,
+          ],
       );
       const routeLatLngs = metrics.startPoint
         ? [
@@ -1005,19 +1241,28 @@ function LiveQuestMap({
         mapRef.current = null;
       }
     };
-  }, [checkedStopKeys, metrics.startPoint, stops]);
+  }, [
+    checkedStopKeys,
+    isPickingStartPoint,
+    metrics.startPoint,
+    onStartPointPick,
+    stops,
+  ]);
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-white/10 bg-background-darker">
+    <section className="overflow-hidden rounded-2xl border border-white/10 bg-background-darker xl:sticky xl:top-6">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
         <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary/15 text-primary-bright">
             <TrackIcon icon={track.icon} className="h-5 w-5" />
           </span>
           <div>
-            <p className="text-sm font-semibold text-foreground">{track.label}</p>
+            <p className="text-sm font-semibold text-foreground">
+              {track.label}
+            </p>
             <p className="mt-1 text-sm text-muted">
-              {formatKm(metrics.totalKm)} route, {formatMinutes(durationMinutes)} target
+              {formatKm(metrics.totalKm)} route,{" "}
+              {formatMinutes(durationMinutes)} target
             </p>
           </div>
         </div>
@@ -1028,8 +1273,14 @@ function LiveQuestMap({
           </Tag>
         </div>
       </div>
-      <div className="relative h-[460px] min-h-[420px] xl:h-[760px]">
+      <div className="relative h-[460px] min-h-[420px] xl:h-[calc(100vh-8rem)] xl:min-h-[560px]">
         <div ref={mapEl} className="h-full w-full" />
+        {isPickingStartPoint && metrics.mappedStops > 0 ? (
+          <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full border border-primary/30 bg-background-darker/95 px-3 py-2 text-xs font-semibold text-primary-bright shadow-lg">
+            <MapPinIcon className="h-3.5 w-3.5" />
+            Pick start point
+          </div>
+        ) : null}
         {metrics.mappedStops === 0 ? (
           <div className="absolute inset-0 grid place-items-center bg-background-darker p-6 text-center">
             <div>
@@ -1215,6 +1466,7 @@ function selectStops({
   durationMinutes,
   generation,
   preferences,
+  startCoordinate,
 }: {
   stops: QuestStop[];
   track: ChallengeTrack;
@@ -1222,6 +1474,7 @@ function selectStops({
   durationMinutes: number;
   generation: number;
   preferences: string[];
+  startCoordinate: Coordinate | null;
 }): QuestStop[] {
   const scored = stops
     .map((stop) => ({
@@ -1229,11 +1482,17 @@ function selectStops({
       score: scoreStop(stop, preferences, track, generation),
     }))
     .sort((a, b) => b.score - a.score);
-  const pool = buildCompactRoutePool(scored, count, track, durationMinutes);
+  const pool = buildCompactRoutePool(
+    scored,
+    count,
+    track,
+    durationMinutes,
+    startCoordinate,
+  );
 
   const selected = pool.slice(0, count).map(({ stop }) => stop);
 
-  return orderStopsByRoute(selected);
+  return orderStopsByRoute(selected, startCoordinate);
 }
 
 function buildCompactRoutePool(
@@ -1241,6 +1500,7 @@ function buildCompactRoutePool(
   count: QuestLength,
   track: ChallengeTrack,
   durationMinutes: number,
+  startCoordinate: Coordinate | null,
 ): Array<{ stop: QuestStop; score: number }> {
   const mapped = scored.filter(({ stop }) => stop.coordinate);
   if (mapped.length < count) {
@@ -1278,7 +1538,10 @@ function buildCompactRoutePool(
       })
       .slice(0, count);
     const selectedStops = items.map(({ candidate }) => candidate.stop);
-    const totalDistance = estimateRouteDistanceKm(orderStopsByRoute(selectedStops));
+    const totalDistance = estimateRouteDistanceKm(
+      orderStopsByRoute(selectedStops, startCoordinate),
+      startCoordinate,
+    );
     const signal = items.reduce((sum, item) => sum + item.candidate.score, 0);
     const farthest = Math.max(...items.map((item) => item.distance));
     const outsideCount = items.filter((item) => item.distance > radiusKm).length;
@@ -1313,24 +1576,38 @@ function scoreStop(
       : 0;
   const mapScore = stop.coordinate ? 28 : 0;
   const nightlifeScore = isNightlifeStop(stop) ? 90 : 0;
-  const randomScore = deterministicJitter(`${stop.restaurantId}:${generation}`, 35);
+  const randomScore = deterministicJitter(
+    `${track.id}:${stop.restaurantId}:${generation}`,
+    48,
+  );
 
   if (track.id === "crawl") {
-    return nightlifeScore + preferenceScore * 0.7 + socialScore + mapScore + randomScore;
+    return (
+      nightlifeScore +
+      preferenceScore * 0.7 +
+      socialScore +
+      mapScore +
+      randomScore * 1.2
+    );
   }
   if (track.id === "roulette") {
-    return randomScore * 4 + preferenceScore * 0.8 + socialScore + mapScore;
+    return randomScore * 4.4 + preferenceScore * 0.8 + socialScore + mapScore;
   }
-  return preferenceScore + socialScore + mapScore + randomScore;
+  return preferenceScore + socialScore + mapScore + randomScore * 1.4;
 }
 
-function orderStopsByRoute(stops: QuestStop[]): QuestStop[] {
+function orderStopsByRoute(
+  stops: QuestStop[],
+  startCoordinate: Coordinate | null = null,
+): QuestStop[] {
   if (stops.length <= 1) return stops;
   const mapped = stops.filter(hasCoordinate);
   const unmapped = stops.filter((stop) => !stop.coordinate);
   if (mapped.length <= 1) return [...mapped, ...unmapped];
 
-  const route = shortestOpenRoute(mapped);
+  const route = startCoordinate
+    ? shortestRouteFromStart(mapped, startCoordinate)
+    : shortestOpenRoute(mapped);
   return [...route, ...unmapped];
 }
 
@@ -1368,13 +1645,56 @@ function shortestOpenRoute(
   return bestRoute;
 }
 
-function estimateRouteDistanceKm(stops: QuestStop[]): number {
-  return stops.reduce((sum, stop, index) => {
-    if (index === 0) return sum;
-    const previous = stops[index - 1];
-    if (!previous.coordinate || !stop.coordinate) return sum;
-    return sum + distanceKm(previous.coordinate, stop.coordinate);
-  }, 0);
+function shortestRouteFromStart(
+  stops: Array<QuestStop & { coordinate: Coordinate }>,
+  startCoordinate: Coordinate,
+): QuestStop[] {
+  let bestRoute: Array<QuestStop & { coordinate: Coordinate }> = stops;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  const route: Array<QuestStop & { coordinate: Coordinate }> = [];
+  const remaining = [...stops];
+
+  function visit(distanceSoFar: number) {
+    if (distanceSoFar >= bestDistance) return;
+    if (remaining.length === 0) {
+      bestDistance = distanceSoFar;
+      bestRoute = [...route];
+      return;
+    }
+
+    for (let index = 0; index < remaining.length; index += 1) {
+      const next = remaining[index];
+      const previous = route[route.length - 1];
+      const previousCoordinate = previous?.coordinate ?? startCoordinate;
+      const nextDistance = distanceKm(previousCoordinate, next.coordinate);
+      route.push(next);
+      remaining.splice(index, 1);
+      visit(distanceSoFar + nextDistance);
+      remaining.splice(index, 0, next);
+      route.pop();
+    }
+  }
+
+  visit(0);
+  return bestRoute;
+}
+
+function estimateRouteDistanceKm(
+  stops: QuestStop[],
+  startCoordinate: Coordinate | null = null,
+): number {
+  let total = 0;
+  let previousCoordinate = startCoordinate;
+
+  stops.forEach((stop) => {
+    if (!stop.coordinate) return;
+    if (previousCoordinate) {
+      total += distanceKm(previousCoordinate, stop.coordinate);
+    }
+    previousCoordinate = stop.coordinate;
+  });
+
+  return total;
 }
 
 function maxPairwiseDistanceKm(stops: QuestStop[]): number {
@@ -1394,8 +1714,11 @@ function maxPairwiseDistanceKm(stops: QuestStop[]): number {
   return maxDistance;
 }
 
-function buildRouteMetrics(stops: QuestStop[]): RouteMetrics {
-  const startPoint = buildQuestStartPoint(stops);
+function buildRouteMetrics(
+  stops: QuestStop[],
+  startPointOverride: RoutePoint | null = null,
+): RouteMetrics {
+  const startPoint = startPointOverride ?? buildQuestStartPoint(stops);
   const segments = stops.map((stop, index): RouteSegment | null => {
     if (!stop.coordinate) return null;
     const from =
@@ -1470,6 +1793,15 @@ function buildQuestStartPoint(stops: QuestStop[]): RoutePoint | null {
     name: "Quest start",
     label: "Quest start",
     coordinate: startCoordinate,
+  };
+}
+
+function startPointFromPreset(preset: StartPointPreset): RoutePoint {
+  return {
+    kind: "start",
+    name: `${preset.label} start`,
+    label: preset.label,
+    coordinate: preset.coordinate,
   };
 }
 
@@ -1610,6 +1942,10 @@ function formatWindowHoursInput(minutes: number): string {
   return Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
 }
 
+function formatCoordinate(coordinate: Coordinate): string {
+  return `${coordinate.latitude.toFixed(4)}, ${coordinate.longitude.toFixed(4)}`;
+}
+
 function formatMinutes(minutes: number): string {
   if (!Number.isFinite(minutes) || minutes <= 0) return "Time pending";
   if (minutes >= 7 * 24 * 60 && minutes % (7 * 24 * 60) === 0) {
@@ -1728,6 +2064,20 @@ function GlassIcon({ className = "" }: { className?: string }) {
         strokeWidth="2"
         strokeLinecap="round"
       />
+    </svg>
+  );
+}
+
+function MapPinIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
+      <path
+        d="M12 21s7-5.1 7-11a7 7 0 1 0-14 0c0 5.9 7 11 7 11Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="10" r="2.5" fill="currentColor" />
     </svg>
   );
 }
