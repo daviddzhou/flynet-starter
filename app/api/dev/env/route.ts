@@ -13,17 +13,26 @@ const ENV_PATH = join(process.cwd(), ".env.local");
 // The credentials the setup drawer manages. Order is the order they're appended
 // to .env.local on first write.
 const FIELDS = [
-  "BLACKBIRD_API_KEY",
-  "BLACKBIRD_CLIENT_ID",
-  "BLACKBIRD_CLIENT_SECRET",
+  "FLYNET_API_KEY",
+  "FLYNET_CLIENT_ID",
+  "FLYNET_CLIENT_SECRET",
+  "REDIRECT_URI",
 ] as const;
 type Field = (typeof FIELDS)[number];
 
-// Same staging defaults the SDK / lib/locations.ts use (unset env = staging).
+// Which fields are secrets. Secrets are masked in the status preview; the
+// redirect URI is just a URL, so we show it in full to make it easy to confirm.
+const SECRET_FIELDS = new Set<Field>([
+  "FLYNET_API_KEY",
+  "FLYNET_CLIENT_ID",
+  "FLYNET_CLIENT_SECRET",
+]);
+
+// Same production defaults the SDK / lib/locations.ts use (unset env = production).
 const DISCOVERY_URL =
-  process.env.API_BASE_URL || "https://api.staging.blackbird.xyz/flynet/v1";
+  process.env.API_BASE_URL || "https://api.blackbird.xyz/flynet/v1";
 const AUTH_URL =
-  process.env.AUTH_BASE_URL || "https://api.staging.blackbird.xyz/oauth";
+  process.env.AUTH_BASE_URL || "https://api.blackbird.xyz/oauth";
 
 type FieldStatus = { isSet: boolean; masked: string | null };
 
@@ -35,7 +44,8 @@ function mask(value: string): string {
 
 function fieldStatus(name: Field): FieldStatus {
   const value = process.env[name]?.trim() ?? "";
-  return { isSet: Boolean(value), masked: value ? mask(value) : null };
+  if (!value) return { isSet: false, masked: null };
+  return { isSet: true, masked: SECRET_FIELDS.has(name) ? mask(value) : value };
 }
 
 function snapshot(): Record<Field, FieldStatus> {
@@ -106,6 +116,25 @@ async function validateOAuthClient(
   }
 }
 
+// The redirect URI isn't an API credential we can verify remotely, but we can
+// catch the mistakes that silently break sign-in: it has to be an absolute
+// http(s) URL ending in /callback (the path app/callback/route.ts handles).
+function validateRedirectUri(value: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "Enter an absolute URL, e.g. https://<subdomain>.ngrok.app/callback.";
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    return "The redirect URI must be an http(s) URL.";
+  }
+  if (!url.pathname.endsWith("/callback")) {
+    return "The redirect URI must end in /callback.";
+  }
+  return null;
+}
+
 // Replace every existing line for `name` with a single fresh one (deduping any
 // pre-existing repeats), or append it if absent. Returns the new file contents.
 function upsertEnv(contents: string, name: string, value: string): string {
@@ -132,7 +161,7 @@ function upsertEnv(contents: string, name: string, value: string): string {
   return out.join("\n");
 }
 
-// POST { values: { BLACKBIRD_API_KEY?, BLACKBIRD_CLIENT_ID?, ... } }
+// POST { values: { FLYNET_API_KEY?, FLYNET_CLIENT_ID?, ... } }
 // Validates the provided credentials, then writes them to .env.local (creating
 // it if needed) without leaving duplicates, and mirrors them into the running
 // process so a follow-up GET reflects them before Next reloads the file.
@@ -162,26 +191,32 @@ export async function POST(req: Request) {
   const fieldErrors: Partial<Record<Field, string>> = {};
 
   // Validate the API key on its own.
-  if (updates.BLACKBIRD_API_KEY) {
-    const err = await validateApiKey(updates.BLACKBIRD_API_KEY);
-    if (err) fieldErrors.BLACKBIRD_API_KEY = err;
+  if (updates.FLYNET_API_KEY) {
+    const err = await validateApiKey(updates.FLYNET_API_KEY);
+    if (err) fieldErrors.FLYNET_API_KEY = err;
   }
 
   // The client id + secret are a pair — verify whenever either is changing.
-  if (updates.BLACKBIRD_CLIENT_ID || updates.BLACKBIRD_CLIENT_SECRET) {
-    const id = effective("BLACKBIRD_CLIENT_ID");
-    const secret = effective("BLACKBIRD_CLIENT_SECRET");
+  if (updates.FLYNET_CLIENT_ID || updates.FLYNET_CLIENT_SECRET) {
+    const id = effective("FLYNET_CLIENT_ID");
+    const secret = effective("FLYNET_CLIENT_SECRET");
     if (!id || !secret) {
-      const missing: Field = !id ? "BLACKBIRD_CLIENT_ID" : "BLACKBIRD_CLIENT_SECRET";
+      const missing: Field = !id ? "FLYNET_CLIENT_ID" : "FLYNET_CLIENT_SECRET";
       fieldErrors[missing] = "Set both the client id and secret to verify them.";
     } else {
       const err = await validateOAuthClient(id, secret);
       if (err) {
         // Attribute the pair error to whichever field(s) the caller sent.
-        if (updates.BLACKBIRD_CLIENT_ID) fieldErrors.BLACKBIRD_CLIENT_ID = err;
-        if (updates.BLACKBIRD_CLIENT_SECRET) fieldErrors.BLACKBIRD_CLIENT_SECRET = err;
+        if (updates.FLYNET_CLIENT_ID) fieldErrors.FLYNET_CLIENT_ID = err;
+        if (updates.FLYNET_CLIENT_SECRET) fieldErrors.FLYNET_CLIENT_SECRET = err;
       }
     }
+  }
+
+  // The redirect URI is validated by shape only — no network call.
+  if (updates.REDIRECT_URI) {
+    const err = validateRedirectUri(updates.REDIRECT_URI);
+    if (err) fieldErrors.REDIRECT_URI = err;
   }
 
   if (Object.keys(fieldErrors).length > 0) {

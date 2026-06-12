@@ -11,40 +11,57 @@ import { AnimatePresence, motion } from "framer-motion";
 //                order; optional steps are badged). Pure UI, copies to clipboard.
 //   • progress — live task status for a `/to-work` run, polled from
 //                /api/dev/progress (which reads .flynet/progress.json).
+//   • deploy   — "I'm ready to deploy": how to ship to Vercel and which env
+//                vars to set there. Pure UI, copies to clipboard.
 // Everything talks to /api/dev/* — nothing here touches real secrets directly.
 
 type FieldStatus = { isSet: boolean; masked: string | null };
 type NgrokStatus = { running: boolean; url: string | null };
 
-type View = "setup" | "prompts" | "progress";
+type View = "setup" | "prompts" | "progress" | "deploy";
 
 // The Blackbird credentials the setup step manages, in display order. `name`
 // matches the .env.local key the backend writes; `validates` notes how the
 // server checks it so the UI can explain what "Save & verify" actually does.
 type CredField =
-  | "BLACKBIRD_API_KEY"
-  | "BLACKBIRD_CLIENT_ID"
-  | "BLACKBIRD_CLIENT_SECRET";
+  | "FLYNET_API_KEY"
+  | "FLYNET_CLIENT_ID"
+  | "FLYNET_CLIENT_SECRET"
+  | "REDIRECT_URI";
 
 const CREDENTIALS: {
   name: CredField;
   label: string;
   help: string;
+  // Secrets render as password fields and are masked once set; the redirect URI
+  // is a plain URL, so it's shown in full to make it easy to confirm.
+  secret: boolean;
+  placeholder?: string;
 }[] = [
   {
-    name: "BLACKBIRD_API_KEY",
+    name: "FLYNET_API_KEY",
     label: "Discovery API key",
     help: "Sent as X-API-Key for restaurant data. Server-side only.",
+    secret: true,
   },
   {
-    name: "BLACKBIRD_CLIENT_ID",
+    name: "FLYNET_CLIENT_ID",
     label: "OAuth client ID",
     help: "Powers “Sign in with Blackbird”.",
+    secret: true,
   },
   {
-    name: "BLACKBIRD_CLIENT_SECRET",
+    name: "FLYNET_CLIENT_SECRET",
     label: "OAuth client secret",
     help: "Backend-only — never reaches the browser.",
+    secret: true,
+  },
+  {
+    name: "REDIRECT_URI",
+    label: "Redirect URI",
+    help: "Your ngrok (or deployed) https URL + /callback. Must match a URI whitelisted for your OAuth app.",
+    secret: false,
+    placeholder: "https://<subdomain>.ngrok.app/callback",
   },
 ];
 
@@ -147,6 +164,7 @@ export function DevDrawer() {
     setup: { eyebrow: "Developer Setup", title: "Get this starter running" },
     prompts: { eyebrow: "Prompts", title: "Your hackathon dev journey" },
     progress: { eyebrow: "Progress", title: "Live task status" },
+    deploy: { eyebrow: "Deploy", title: "Ship it to Vercel" },
   };
 
   return (
@@ -263,10 +281,16 @@ export function DevDrawer() {
                           hint="Live task status for a /to-work run, polled from progress.json."
                           onClick={() => setView("progress")}
                         />
+                        <NavCard
+                          title="I'm ready to deploy"
+                          hint="Ship to Vercel — push, import, and set your env vars there."
+                          onClick={() => setView("deploy")}
+                        />
                       </>
                     ) : null}
                     {view === "prompts" ? <PromptsView /> : null}
                     {view === "progress" ? <ProgressView /> : null}
+                    {view === "deploy" ? <DeployView /> : null}
                   </motion.div>
                 </AnimatePresence>
               </div>
@@ -283,9 +307,10 @@ export function DevDrawer() {
 }
 
 // ── Step 1: Blackbird credentials ────────────────────────────────────────────
-// API key + OAuth client id/secret. Saving runs them through the live API
-// (Discovery for the key, the OAuth token endpoint for the client pair) before
-// they're written to .env.local — so a typo is caught here, not at runtime.
+// API key + OAuth client id/secret + redirect URI. Saving runs the secrets
+// through the live API (Discovery for the key, the OAuth token endpoint for the
+// client pair) and shape-checks the redirect URI before any of them are written
+// to .env.local — so a typo is caught here, not at runtime.
 function CredentialsStep() {
   const [status, setStatus] = useState<CredStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -370,7 +395,7 @@ function CredentialsStep() {
       index={1}
       title="Blackbird credentials"
       done={allSet}
-      hint="API key + OAuth client id/secret. Verified against the live API, then written to .env.local."
+      hint="API key, OAuth client id/secret, and redirect URI. Verified, then written to .env.local."
     >
       {loading ? (
         <Skeleton />
@@ -404,9 +429,14 @@ function CredentialsStep() {
 
                 {set && !editing[cred.name] ? (
                   <div className="flex items-center gap-2 text-sm">
-                    <span className="text-success">✓ Configured</span>
-                    {/* Already present → show it struck out. */}
-                    <code className="font-mono text-muted line-through">
+                    <span className="shrink-0 text-success">✓ Configured</span>
+                    {/* A masked secret is struck through to read as "stored,
+                        replaceable"; the plain redirect URL is shown as-is. */}
+                    <code
+                      className={`truncate font-mono text-muted ${
+                        cred.secret ? "line-through" : ""
+                      }`}
+                    >
                       {status?.[cred.name]?.masked}
                     </code>
                   </div>
@@ -418,7 +448,7 @@ function CredentialsStep() {
 
                 {shown ? (
                   <input
-                    type="password"
+                    type={cred.secret ? "password" : "text"}
                     value={values[cred.name] ?? ""}
                     onChange={(e) =>
                       setValues((v) => ({ ...v, [cred.name]: e.target.value }))
@@ -426,7 +456,7 @@ function CredentialsStep() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") save();
                     }}
-                    placeholder={`Paste your ${cred.name}`}
+                    placeholder={cred.placeholder ?? `Paste your ${cred.name}`}
                     className={`w-full rounded-xl border bg-surface-low px-3 py-2 text-sm text-foreground placeholder:text-subtle focus:outline-none ${
                       err
                         ? "border-failure focus:border-failure"
@@ -465,6 +495,15 @@ function CredentialsStep() {
 }
 
 // ── Step 2: ngrok ────────────────────────────────────────────────────────────
+// Hand this to the agent so it does the whole tunnel setup — adds the authtoken,
+// starts the tunnel, and wires REDIRECT_URI — without the dev juggling a second
+// terminal. The dev pastes their token where marked before sending it.
+const AGENT_TUNNEL_PROMPT =
+  "My ngrok authtoken is: <paste it here>. Add it with " +
+  "`ngrok config add-authtoken`, start a tunnel to port 3000 " +
+  "(`ngrok http 3000`), tell me the public https URL, and set REDIRECT_URI in " +
+  ".env.local to that URL plus /callback.";
+
 function NgrokStep() {
   const [status, setStatus] = useState<NgrokStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -504,7 +543,7 @@ function NgrokStep() {
       index={2}
       title="ngrok tunnel"
       done={running}
-      hint="Public URL for local sign-in — staging blocks localhost."
+      hint="Public URL for local sign-in — Blackbird blocks localhost."
       action={
         <button
           type="button"
@@ -544,12 +583,46 @@ function NgrokStep() {
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div className="flex items-center gap-2 text-sm text-muted">
             <span className="inline-block h-2 w-2 rounded-full bg-failure" />
             ngrok is not running
           </div>
-          <p className="text-xs text-subtle">Start it, then set REDIRECT_URI:</p>
+
+          {/* First run only: ngrok refuses to tunnel without an authtoken, and
+              a bare `ngrok http 3000` fails with an opaque error if you skip it.
+              Point first-timers at the free signup before they hit that wall. */}
+          <p className="rounded-lg border border-brand-yellow/30 bg-brand-yellow/10 px-3 py-2 text-xs leading-relaxed text-brand-yellow">
+            First time with ngrok? Grab a free authtoken at{" "}
+            <a
+              href="https://dashboard.ngrok.com/get-started/your-authtoken"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2"
+            >
+              ngrok.com
+            </a>{" "}
+            — then either run{" "}
+            <code className="font-mono">ngrok config add-authtoken &lt;token&gt;</code>{" "}
+            yourself, or paste the token into the prompt below and let your agent
+            set it up.
+          </p>
+
+          {/* Easiest path: hand the agent the token; it does the whole setup. */}
+          <p className="text-xs text-subtle">
+            Ask your agent (paste your authtoken in first):
+          </p>
+          <div className="flex items-start gap-2 rounded-xl border border-strong bg-surface-low px-3 py-2">
+            <code className="flex-1 font-mono text-xs leading-relaxed text-foreground">
+              {AGENT_TUNNEL_PROMPT}
+            </code>
+            <CopyIconButton text={AGENT_TUNNEL_PROMPT} label="Copy prompt" />
+          </div>
+
+          {/* Or do it by hand. */}
+          <p className="text-xs text-subtle">
+            Or run it yourself, then set REDIRECT_URI:
+          </p>
           <div className="flex items-center gap-2 rounded-xl border border-strong bg-surface-low px-3 py-2">
             <code className="flex-1 font-mono text-xs text-foreground">
               ngrok http 3000
@@ -844,6 +917,142 @@ function ProgressView() {
 }
 
 // A tappable card in the setup view that navigates to another drawer view.
+// ── Deploy view: ship to Vercel ──────────────────────────────────────────────
+// Hand this to the agent to do the whole deploy — push, create the project, set
+// the secrets, and report back the callback URL to whitelist.
+const DEPLOY_AGENT_PROMPT =
+  "Deploy this Next.js app to Vercel. If it isn't on GitHub yet, push it, then " +
+  "create a Vercel project from the repo. Set these environment variables in " +
+  "Vercel from my .env.local: FLYNET_API_KEY, FLYNET_CLIENT_ID, " +
+  "FLYNET_CLIENT_SECRET. After the first deploy, set REDIRECT_URI to " +
+  "https://<the-deployed-domain>/callback, redeploy, and tell me that callback " +
+  "URL so I can get it whitelisted for my OAuth app.";
+
+// The .env.local keys that have to follow the app to Vercel. The API_BASE_URL /
+// AUTH_* vars are intentionally absent — the app already defaults to production
+// Blackbird, so they're only needed to *override* back to staging.
+const DEPLOY_ENV_KEYS = [
+  "FLYNET_API_KEY",
+  "FLYNET_CLIENT_ID",
+  "FLYNET_CLIENT_SECRET",
+  "REDIRECT_URI",
+];
+
+function DeployView() {
+  return (
+    <div className="space-y-6">
+      <p className="text-xs leading-relaxed text-subtle">
+        This starter is a standard Next.js app, so Vercel deploys it with zero
+        build config. The work is moving your secrets across and pointing OAuth
+        at the live domain.
+      </p>
+
+      {/* Easy path: let the agent drive the whole deploy. */}
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
+          Let your agent do it
+        </h3>
+        <div className="flex items-start gap-2 rounded-xl border border-strong bg-surface-low px-3 py-2">
+          <code className="flex-1 font-mono text-[11px] leading-relaxed text-foreground">
+            {DEPLOY_AGENT_PROMPT}
+          </code>
+          <CopyIconButton text={DEPLOY_AGENT_PROMPT} label="Copy prompt" />
+        </div>
+      </div>
+
+      {/* Manual path. */}
+      <div className="space-y-3">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
+          Or do it by hand
+        </h3>
+        <ol className="space-y-3 text-xs leading-relaxed text-subtle">
+          <li className="flex gap-3">
+            <span className="font-mono text-primary-bright">1.</span>
+            <span>
+              Push the repo to GitHub (or run{" "}
+              <code className="font-mono text-foreground">vercel</code> to deploy
+              straight from the CLI).
+            </span>
+          </li>
+          <li className="flex gap-3">
+            <span className="font-mono text-primary-bright">2.</span>
+            <span>
+              Import it at{" "}
+              <a
+                href="https://vercel.com/new"
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary-bright underline underline-offset-2"
+              >
+                vercel.com/new
+              </a>
+              . Next.js is auto-detected — no build settings to change.
+            </span>
+          </li>
+          <li className="flex gap-3">
+            <span className="font-mono text-primary-bright">3.</span>
+            <span>
+              In Project Settings → Environment Variables, add the keys below
+              with the values from your{" "}
+              <code className="font-mono text-foreground">.env.local</code>.
+            </span>
+          </li>
+          <li className="flex gap-3">
+            <span className="font-mono text-primary-bright">4.</span>
+            <span>
+              After the first deploy, set{" "}
+              <code className="font-mono text-foreground">REDIRECT_URI</code> to{" "}
+              <code className="font-mono text-foreground">
+                https://&lt;your-app&gt;.vercel.app/callback
+              </code>
+              , redeploy, and get that{" "}
+              <code className="font-mono text-foreground">/callback</code> URL
+              whitelisted for your OAuth app.
+            </span>
+          </li>
+        </ol>
+      </div>
+
+      {/* The env keys to recreate in Vercel. */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
+            Env vars to set
+          </h3>
+          <CopyIconButton
+            text={DEPLOY_ENV_KEYS.join("\n")}
+            label="Copy env keys"
+          />
+        </div>
+        <div className="rounded-xl border border-strong bg-surface-low px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground">
+          {DEPLOY_ENV_KEYS.map((k) => (
+            <div key={k}>{k}</div>
+          ))}
+        </div>
+        <p className="text-[11px] leading-relaxed text-subtle">
+          <code className="font-mono">ACCESS_TOKEN</code> is optional (pins a
+          member token). You don&apos;t need{" "}
+          <code className="font-mono">API_BASE_URL</code> /{" "}
+          <code className="font-mono">AUTH_BASE_URL</code> /{" "}
+          <code className="font-mono">AUTH_AUDIENCE</code> — the app already
+          targets production Blackbird; set them only to point back at staging.
+        </p>
+      </div>
+
+      {/* The one thing people forget — the redirect URI must match the live host
+          and be whitelisted, or sign-in breaks in prod exactly like it would on
+          localhost. */}
+      <p className="rounded-lg border border-brand-yellow/30 bg-brand-yellow/10 px-3 py-2 text-xs leading-relaxed text-brand-yellow">
+        Heads up: your local{" "}
+        <code className="font-mono">REDIRECT_URI</code> (the ngrok URL) won&apos;t
+        work in production. It has to be your Vercel domain plus{" "}
+        <code className="font-mono">/callback</code>, and that exact URL must be
+        whitelisted for your OAuth app or sign-in will fail.
+      </p>
+    </div>
+  );
+}
+
 function NavCard({
   title,
   hint,
