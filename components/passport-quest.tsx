@@ -232,7 +232,8 @@ export function PassportQuest({
   const [questLength, setQuestLength] = useState<QuestLength>(5);
   const [durationMinutes, setDurationMinutes] = useState(180);
   const [generation, setGeneration] = useState(0);
-  const [challengeVersion, setChallengeVersion] = useState(1);
+  const [challengeVersion, setChallengeVersion] = useState(0);
+  const [challengeGenerated, setChallengeGenerated] = useState(false);
   const [manualStartPoint, setManualStartPoint] = useState<RoutePoint | null>(
     null,
   );
@@ -398,6 +399,8 @@ export function PassportQuest({
   }, [selectedStopSignature]);
 
   function togglePreference(preference: string) {
+    setChallengeGenerated(false);
+    setCheckedStopKeys([]);
     setGuestProfile((current) => {
       const exists = current.preferences.includes(preference);
       return {
@@ -411,6 +414,8 @@ export function PassportQuest({
   }
 
   function toggleMemberPreference(preference: string) {
+    setChallengeGenerated(false);
+    setCheckedStopKeys([]);
     setMemberTasteProfile((current) => {
       const exists = current.preferences.includes(preference);
       return {
@@ -425,6 +430,13 @@ export function PassportQuest({
   function generateQuest() {
     setGeneration((current) => current + 1);
     setChallengeVersion((current) => current + 1);
+    setChallengeGenerated(true);
+    setCheckedStopKeys([]);
+  }
+
+  function selectProfileMode(nextMode: ProfileMode) {
+    setProfileMode(nextMode);
+    setChallengeGenerated(false);
     setCheckedStopKeys([]);
   }
 
@@ -433,26 +445,51 @@ export function PassportQuest({
       CHALLENGE_TRACKS.find((track) => track.id === nextTrackId) ??
       CHALLENGE_TRACKS[0];
     setTrackId(nextTrackId);
+    setChallengeGenerated(false);
+    setCheckedStopKeys([]);
     if (!nextTrack.stopOptions.includes(questLength)) {
       setQuestLength(nextTrack.defaultStops);
     }
   }
 
   function regenerateTrack(nextTrackId: ChallengeTrackId) {
-    selectTrack(nextTrackId);
+    const nextTrack =
+      CHALLENGE_TRACKS.find((track) => track.id === nextTrackId) ??
+      CHALLENGE_TRACKS[0];
+    setTrackId(nextTrackId);
+    if (!nextTrack.stopOptions.includes(questLength)) {
+      setQuestLength(nextTrack.defaultStops);
+    }
     setGeneration((current) => current + 1);
     setChallengeVersion((current) => current + 1);
+    setChallengeGenerated(true);
+    setCheckedStopKeys([]);
+  }
+
+  function selectQuestLength(length: QuestLength) {
+    setQuestLength(length);
+    setChallengeGenerated(false);
+    setCheckedStopKeys([]);
+  }
+
+  function selectDurationMinutes(minutes: number) {
+    setDurationMinutes(minutes);
+    setChallengeGenerated(false);
     setCheckedStopKeys([]);
   }
 
   function selectStartPreset(preset: StartPointPreset) {
     setManualStartPoint(startPointFromPreset(preset));
     setIsPickingStartPoint(false);
+    setChallengeGenerated(false);
+    setCheckedStopKeys([]);
   }
 
   function useAutoStartPoint() {
     setManualStartPoint(null);
     setIsPickingStartPoint(false);
+    setChallengeGenerated(false);
+    setCheckedStopKeys([]);
   }
 
   const handleMapStartPointPick = useCallback((coordinate: Coordinate) => {
@@ -463,6 +500,8 @@ export function PassportQuest({
       coordinate,
     });
     setIsPickingStartPoint(false);
+    setChallengeGenerated(false);
+    setCheckedStopKeys([]);
   }, []);
 
   function checkInStop(stop: QuestStop) {
@@ -510,7 +549,7 @@ export function PassportQuest({
             <ProfileBuilder
               signedIn={signedIn}
               profileMode={profileMode}
-              onProfileModeChange={setProfileMode}
+              onProfileModeChange={selectProfileMode}
               guestProfile={guestProfile}
               guestStatus={guestProfileStatus}
               memberTasteProfile={memberTasteProfile}
@@ -518,13 +557,21 @@ export function PassportQuest({
               onGuestNameChange={(name) => {
                 setGuestProfile((current) => ({ ...current, name }));
                 setGuestProfileStatus("draft");
+                setChallengeGenerated(false);
+                setCheckedStopKeys([]);
               }}
               onTogglePreference={togglePreference}
-              onCreateGuestProfile={() => setGuestProfileStatus("created")}
+              onCreateGuestProfile={() => {
+                setGuestProfileStatus("created");
+                setChallengeGenerated(false);
+                setCheckedStopKeys([]);
+              }}
               onToggleMemberPreference={toggleMemberPreference}
-              onCreateMemberTasteProfile={() =>
-                setMemberTasteProfileStatus("created")
-              }
+              onCreateMemberTasteProfile={() => {
+                setMemberTasteProfileStatus("created");
+                setChallengeGenerated(false);
+                setCheckedStopKeys([]);
+              }}
             />
 
             <ControlGroup label="Challenge track">
@@ -585,7 +632,7 @@ export function PassportQuest({
                   <button
                     key={length}
                     type="button"
-                    onClick={() => setQuestLength(length)}
+                    onClick={() => selectQuestLength(length)}
                     className={`h-10 rounded-lg text-sm font-semibold transition duration-150 ease-standard ${
                       questLength === length
                         ? "bg-foreground text-background"
@@ -600,7 +647,7 @@ export function PassportQuest({
 
             <QuestWindowControl
               durationMinutes={durationMinutes}
-              onDurationChange={setDurationMinutes}
+              onDurationChange={selectDurationMinutes}
             />
 
             <StartPointControl
@@ -627,21 +674,34 @@ export function PassportQuest({
               checkedCount={checkedCount}
               totalCount={selectedStops.length}
               completed={completed}
+              challengeGenerated={challengeGenerated}
               onCompleteAll={completeDemoCheckIns}
               onReset={resetCheckIns}
             />
 
-            <MockChallengeCard
-              challengeId={mockChallengeId}
-              track={activeTrack}
-              stopCount={selectedStops.length}
-              windowLabel={formatMinutes(durationMinutes)}
-              cadenceLabel={cadenceLabel}
-              rewardFly={rewardFly}
-              completed={completed}
-            />
+            {challengeGenerated ? (
+              <>
+                <MockChallengeCard
+                  challengeId={mockChallengeId}
+                  track={activeTrack}
+                  stopCount={selectedStops.length}
+                  windowLabel={formatMinutes(durationMinutes)}
+                  cadenceLabel={cadenceLabel}
+                  rewardFly={rewardFly}
+                  completed={completed}
+                />
 
-            <ShareQuestCard snapshot={shareSnapshot} />
+                <ShareQuestCard snapshot={shareSnapshot} />
+              </>
+            ) : (
+              <ChallengeDraftCard
+                track={activeTrack}
+                stopCount={selectedStops.length}
+                windowLabel={formatMinutes(durationMinutes)}
+                cadenceLabel={cadenceLabel}
+                rewardFly={rewardFly}
+              />
+            )}
 
             <div className="flex flex-wrap gap-2">
               {activePreferences.length > 0 ? (
@@ -664,7 +724,7 @@ export function PassportQuest({
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:bg-primary-dim"
               >
                 <RefreshIcon className="h-4 w-4" />
-                Generate challenge
+                {challengeGenerated ? "Regenerate challenge" : "Generate challenge"}
               </button>
               {directionsUrl ? (
                 <a
@@ -707,16 +767,18 @@ export function PassportQuest({
           track={activeTrack}
           durationMinutes={durationMinutes}
           cadenceLabel={cadenceLabel}
+          challengeGenerated={challengeGenerated}
         />
         <RewardsPanel
-          completed={completed}
+          completed={challengeGenerated && completed}
           completedCount={checkedCount}
           totalCount={selectedStops.length}
           questTitle={`${activeTrack.label}, ${selectedStops.length} stops`}
           rewardPreview={activeTrack.reward}
-          challengeId={mockChallengeId}
+          challengeId={challengeGenerated ? mockChallengeId : "Generate challenge first"}
           rewardFly={rewardFly}
           recipientName={activeProfileName}
+          challengeGenerated={challengeGenerated}
         />
       </div>
     </section>
@@ -1138,12 +1200,14 @@ function CheckInProgress({
   checkedCount,
   totalCount,
   completed,
+  challengeGenerated,
   onCompleteAll,
   onReset,
 }: {
   checkedCount: number;
   totalCount: number;
   completed: boolean;
+  challengeGenerated: boolean;
   onCompleteAll: () => void;
   onReset: () => void;
 }) {
@@ -1159,7 +1223,7 @@ function CheckInProgress({
           </p>
         </div>
         <Tag tone={completed ? "success" : "neutral"}>
-          {completed ? "Ready" : "In progress"}
+          {completed ? "Ready" : challengeGenerated ? "In progress" : "Draft"}
         </Tag>
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
@@ -1172,10 +1236,10 @@ function CheckInProgress({
         <button
           type="button"
           onClick={onCompleteAll}
-          disabled={completed}
+          disabled={completed || !challengeGenerated}
           className="inline-flex h-8 items-center justify-center rounded-full border border-success/40 bg-success/10 px-3 text-xs font-semibold text-success transition hover:bg-success/15 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Mark all checked in
+          {challengeGenerated ? "Mark all checked in" : "Generate first"}
         </button>
         {checkedCount > 0 ? (
           <button
@@ -1187,6 +1251,66 @@ function CheckInProgress({
           </button>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function ChallengeDraftCard({
+  track,
+  stopCount,
+  windowLabel,
+  cadenceLabel,
+  rewardFly,
+}: {
+  track: ChallengeTrack;
+  stopCount: number;
+  windowLabel: string;
+  cadenceLabel: string;
+  rewardFly: number;
+}) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-background-darker p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-medium text-subtle">
+            Challenge draft
+          </p>
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            {track.label} preview
+          </p>
+        </div>
+        <Tag>Draft</Tag>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg border border-white/10 bg-surface-low p-2">
+          <p className="text-subtle">Stops</p>
+          <p className="mt-0.5 font-semibold text-foreground">
+            {stopCount} stops
+          </p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-surface-low p-2">
+          <p className="text-subtle">Window</p>
+          <p className="mt-0.5 font-semibold text-foreground">
+            {windowLabel}
+          </p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-surface-low p-2">
+          <p className="text-subtle">Cadence</p>
+          <p className="mt-0.5 font-semibold text-foreground">
+            {cadenceLabel}
+          </p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-surface-low p-2">
+          <p className="text-subtle">Reward</p>
+          <p className="mt-0.5 font-semibold text-success">
+            +{rewardFly} FLY
+          </p>
+        </div>
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-muted">
+        Press Generate challenge to lock the current route into a mock challenge
+        and reveal sharing.
+      </p>
     </div>
   );
 }
@@ -1578,6 +1702,7 @@ function Itinerary({
   track,
   durationMinutes,
   cadenceLabel,
+  challengeGenerated,
 }: {
   stops: QuestStop[];
   metrics: RouteMetrics;
@@ -1587,6 +1712,7 @@ function Itinerary({
   track: ChallengeTrack;
   durationMinutes: number;
   cadenceLabel: string;
+  challengeGenerated: boolean;
 }) {
   return (
     <section className="rounded-2xl border border-white/10 bg-surface-low">
@@ -1612,6 +1738,7 @@ function Itinerary({
             checked={checkedStopKeys.includes(stopKey(stop))}
             onCheckIn={onCheckIn}
             reason={buildStopReason(stop, preferences, track)}
+            challengeGenerated={challengeGenerated}
           />
         ))}
       </div>
@@ -1625,12 +1752,14 @@ function ItineraryRow({
   checked,
   onCheckIn,
   reason,
+  challengeGenerated,
 }: {
   stop: QuestStop;
   segment: RouteSegment | null;
   checked: boolean;
   onCheckIn: (stop: QuestStop) => void;
   reason: string;
+  challengeGenerated: boolean;
 }) {
   const reserve = stop.location?.reservationUrl;
   const fallbackLink = stop.websiteUrl;
@@ -1681,15 +1810,21 @@ function ItineraryRow({
         <button
           type="button"
           onClick={() => onCheckIn(stop)}
-          disabled={checked}
+          disabled={checked || !challengeGenerated}
           className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-full px-3 text-sm font-semibold transition ${
             checked
               ? "border border-success/40 bg-success/10 text-success"
-              : "bg-primary text-primary-foreground hover:opacity-90"
+              : challengeGenerated
+                ? "bg-primary text-primary-foreground hover:opacity-90"
+                : "border border-white/10 bg-white/5 text-muted"
           }`}
         >
           <CheckIcon className="h-3.5 w-3.5" />
-          {checked ? "Checked in" : "Mark check-in"}
+          {checked
+            ? "Checked in"
+            : challengeGenerated
+              ? "Mark check-in"
+              : "Generate first"}
         </button>
         {directionsUrl ? (
           <a

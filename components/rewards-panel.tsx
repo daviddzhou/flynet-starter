@@ -11,6 +11,7 @@ export function RewardsPanel({
   challengeId,
   rewardFly,
   recipientName,
+  challengeGenerated,
 }: {
   completed: boolean;
   completedCount: number;
@@ -20,8 +21,11 @@ export function RewardsPanel({
   challengeId: string;
   rewardFly: number;
   recipientName: string;
+  challengeGenerated: boolean;
 }) {
-  const payoutReference = `mock_fly_${challengeId.toLowerCase().replaceAll("-", "_")}`;
+  const payoutReference = challengeGenerated
+    ? `mock_fly_${challengeId.toLowerCase().replaceAll("-", "_")}`
+    : "pending";
 
   return (
     <aside
@@ -37,11 +41,15 @@ export function RewardsPanel({
             Rewards preview
           </p>
           <h2 className="mt-1 text-xl font-semibold text-foreground">
-            {completed ? `+${rewardFly} FLY unlocked` : "Reward armed"}
+            {completed
+              ? `+${rewardFly} FLY unlocked`
+              : challengeGenerated
+                ? "Reward armed"
+                : "Generate challenge first"}
           </h2>
         </div>
-        <Tag tone={completed ? "success" : "primary"}>
-          {completed ? "Simulated" : "Safe mode"}
+        <Tag tone={completed ? "success" : challengeGenerated ? "primary" : "neutral"}>
+          {completed ? "Simulated" : challengeGenerated ? "Safe mode" : "Draft"}
         </Tag>
       </div>
 
@@ -68,12 +76,16 @@ export function RewardsPanel({
         <p className="text-sm font-medium">
           {completed
             ? `Mock transfer posted: +${rewardFly} FLY to ${recipientName}.`
-            : "Mark each stop checked in to preview the Rewards API moment without moving FLY."}
+            : challengeGenerated
+              ? "Mark each stop checked in to preview the Rewards API moment without moving FLY."
+              : "Generate a challenge to arm the mock reward and enable check-ins."}
         </p>
         <p className="mt-2 text-sm leading-relaxed text-muted">
           {completed
             ? `Reference ${payoutReference}. Production would issue only after verified check-ins and merchant confirmation.`
-            : "A production version would issue this only after verified check-ins and an explicit merchant-side confirmation."}
+            : challengeGenerated
+              ? "A production version would issue this only after verified check-ins and an explicit merchant-side confirmation."
+              : "The route can keep updating as a preview until the challenge is generated."}
         </p>
       </div>
     </aside>
