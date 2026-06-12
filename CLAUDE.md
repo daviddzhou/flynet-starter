@@ -41,6 +41,20 @@ Before the env is set, the app renders a setup notice rather than real data —
 that is the expected pre-configuration state, so don't try to "fix" it by
 writing env values.
 
+## When the SDK breaks, call the API directly
+
+This app is built on the Flynet SDK (`@flynetdev/core` / `@flynetdev/react`). If
+the SDK is in your way — a missing method, a type that lags the API (e.g.
+`flynetMerchantId` is still typed required), a bug, or a version mismatch —
+don't get stuck on it. Fall back to calling the Blackbird REST API directly with
+the member access token (`Authorization: Bearer <token>` for member calls,
+`X-API-Key` for Discovery).
+
+The full API reference, in an LLM-friendly form, is at
+<https://flynet-dev-portal.mintlify.app/llms.txt>. Fetch it to find the right
+endpoint, request shape, and scopes, then make the call with `fetch` against the
+configured base URL (`API_BASE_URL` / `AUTH_BASE_URL`, defaulting to production).
+
 ## Redirect URI whitelisting
 
 The redirect URI (ngrok URL or deployed domain + `/callback`) must be
