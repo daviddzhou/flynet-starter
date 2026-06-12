@@ -9,10 +9,11 @@ import { LoginButton } from "./login-button";
 import { RewardsPanel } from "./rewards-panel";
 import { Tag } from "./tag";
 
-type QuestLength = 3 | 4 | 5 | 6 | 7;
+type QuestLength = 2 | 3 | 4 | 5 | 6 | 7;
 type ChallengeTrackId = "classic" | "roulette" | "crawl";
 type ProfileMode = "member" | "guest";
 type GuestProfileStatus = "draft" | "created";
+type RouteRegion = "manhattan" | "brooklyn" | "queens" | "other" | "unknown";
 
 type GuestProfile = {
   name: string;
@@ -33,8 +34,6 @@ type ChallengeTrack = {
   label: string;
   persona: string;
   description: string;
-  stopOptions: QuestLength[];
-  defaultStops: QuestLength;
   reward: string;
   baseFlyReward: number;
   icon: "compass" | "dice" | "glass";
@@ -73,6 +72,7 @@ const DEFAULT_MEMBER_TASTE_PROFILE: GuestProfile = {
 
 const GUEST_PROFILE_STORAGE_KEY = "passport-quest:guest-profile:v1";
 const MEMBER_TASTE_PROFILE_STORAGE_KEY = "passport-quest:member-taste-profile:v1";
+const QUEST_LENGTH_OPTIONS: QuestLength[] = [2, 3, 4, 5, 6, 7];
 
 const QUEST_WINDOW_PRESETS: QuestWindowPreset[] = [
   { minutes: 120, label: "2h", detail: "Quick" },
@@ -157,8 +157,6 @@ const CHALLENGE_TRACKS: ChallengeTrack[] = [
     label: "Classic Quest",
     persona: "Planner",
     description: "Flexible passport cadence, from one night to one week.",
-    stopOptions: [3, 4, 5, 6, 7],
-    defaultStops: 5,
     reward: "Simulated 50 FLY unlock after the final check-in",
     baseFlyReward: 50,
     icon: "compass",
@@ -168,8 +166,6 @@ const CHALLENGE_TRACKS: ChallengeTrack[] = [
     label: "Roulette Run",
     persona: "Spontaneous",
     description: "A surprise route seeded from your profile and the crowd.",
-    stopOptions: [3, 4, 5, 6, 7],
-    defaultStops: 5,
     reward: "Simulated mystery bonus after every stop is checked in",
     baseFlyReward: 75,
     icon: "dice",
@@ -179,8 +175,6 @@ const CHALLENGE_TRACKS: ChallengeTrack[] = [
     label: "Bar Crawl",
     persona: "Group",
     description: "Social stops, drinks-friendly picks, easy walking route.",
-    stopOptions: [4, 5, 6, 7],
-    defaultStops: 5,
     reward: "Simulated group passport stamp after the last stop",
     baseFlyReward: 60,
     icon: "glass",
@@ -294,12 +288,6 @@ export function PassportQuest({
       }),
     );
   }, [memberTasteProfile, memberTasteProfileStatus]);
-
-  useEffect(() => {
-    if (!activeTrack.stopOptions.includes(questLength)) {
-      setQuestLength(activeTrack.defaultStops);
-    }
-  }, [activeTrack, questLength]);
 
   const selectedStops = useMemo(
     () =>
@@ -434,19 +422,10 @@ export function PassportQuest({
     setTrackId(nextTrackId);
     setChallengeGenerated(false);
     setCheckedStopKeys([]);
-    if (!nextTrack.stopOptions.includes(questLength)) {
-      setQuestLength(nextTrack.defaultStops);
-    }
   }
 
   function regenerateTrack(nextTrackId: ChallengeTrackId) {
-    const nextTrack =
-      CHALLENGE_TRACKS.find((track) => track.id === nextTrackId) ??
-      CHALLENGE_TRACKS[0];
     setTrackId(nextTrackId);
-    if (!nextTrack.stopOptions.includes(questLength)) {
-      setQuestLength(nextTrack.defaultStops);
-    }
     setRecentRouteStopKeys(selectedStops.map(stopKey));
     setGeneration((current) => current + 1);
     setChallengeVersion((current) => current + 1);
@@ -615,8 +594,8 @@ export function PassportQuest({
             </ControlGroup>
 
             <ControlGroup label="Stops">
-              <div className="grid rounded-xl border border-white/10 bg-background-darker p-1" style={{ gridTemplateColumns: `repeat(${activeTrack.stopOptions.length}, minmax(0, 1fr))` }}>
-                {activeTrack.stopOptions.map((length) => (
+              <div className="grid rounded-xl border border-white/10 bg-background-darker p-1" style={{ gridTemplateColumns: `repeat(${QUEST_LENGTH_OPTIONS.length}, minmax(0, 1fr))` }}>
+                {QUEST_LENGTH_OPTIONS.map((length) => (
                   <button
                     key={length}
                     type="button"
@@ -1895,7 +1874,13 @@ function buildCompactRoutePool(
   generation: number,
   startCoordinate: Coordinate | null,
 ): Array<{ stop: QuestStop; score: number }> {
-  const mapped = scored.filter(({ stop }) => stop.coordinate);
+  const mapped = filterWalkableStartPool(
+    scored.filter(({ stop }) => stop.coordinate),
+    count,
+    track,
+    durationMinutes,
+    startCoordinate,
+  );
   if (mapped.length < count) {
     return [
       ...mapped,
@@ -1917,6 +1902,10 @@ function buildCompactRoutePool(
           anchor.stop.coordinate && candidate.stop.coordinate
             ? distanceKm(anchor.stop.coordinate, candidate.stop.coordinate)
             : Number.POSITIVE_INFINITY,
+        startDistance:
+          startCoordinate && candidate.stop.coordinate
+            ? distanceKm(startCoordinate, candidate.stop.coordinate)
+            : 0,
         variety: deterministicJitter(
           `${track.id}:${generation}:${anchor.stop.restaurantId}:${candidate.stop.restaurantId}`,
           track.id === "roulette" ? 180 : 130,
@@ -1927,6 +1916,7 @@ function buildCompactRoutePool(
         fit:
           item.candidate.score -
           item.distance * 42 +
+          item.startDistance * (startCoordinate ? -58 : 0) +
           item.variety * (track.id === "roulette" ? 1.35 : 1.05),
       }))
       .sort((a, b) => {
@@ -1948,6 +1938,13 @@ function buildCompactRoutePool(
     const farthest = Math.max(...items.map((item) => item.distance));
     const outsideCount = items.filter((item) => item.distance > radiusKm).length;
     const spanDistance = maxPairwiseDistanceKm(selectedStops);
+    const startSpanDistance = startCoordinate
+      ? Math.max(
+          ...selectedStops.map((stop) =>
+            stop.coordinate ? distanceKm(startCoordinate, stop.coordinate) : 0,
+          ),
+        )
+      : 0;
     const overBudget = Math.max(0, totalDistance - walkingBudgetKm);
     const generationBonus = deterministicJitter(
       `${track.id}:${generation}:${anchor.stop.restaurantId}:cluster`,
@@ -1960,6 +1957,7 @@ function buildCompactRoutePool(
         totalDistance * 65 -
         overBudget * 140 -
         spanDistance * 42 -
+        startSpanDistance * (startCoordinate ? 95 : 0) -
         outsideCount * 95 -
         Math.max(0, farthest - radiusKm) * 70 -
         repeatedBucketPenalty(selectedStops) +
@@ -1968,6 +1966,64 @@ function buildCompactRoutePool(
   });
 
   return clusters.sort((a, b) => b.score - a.score)[0]?.items ?? mapped;
+}
+
+function filterWalkableStartPool(
+  scored: Array<{ stop: QuestStop; score: number }>,
+  count: QuestLength,
+  track: ChallengeTrack,
+  durationMinutes: number,
+  startCoordinate: Coordinate | null,
+): Array<{ stop: QuestStop; score: number }> {
+  if (!startCoordinate) return scored;
+
+  const startRegion = routeRegionForCoordinate(startCoordinate);
+  const radiusKm = startRadiusKm(track, count, durationMinutes);
+  const sameRegion = scored.filter(({ stop }) => {
+    if (!stop.coordinate) return false;
+    const stopRegion = routeRegionForStop(stop);
+    return (
+      (stopRegion === "unknown" ||
+        startRegion === "unknown" ||
+        stopRegion === startRegion) &&
+      distanceKm(startCoordinate, stop.coordinate) <= radiusKm
+    );
+  });
+
+  if (sameRegion.length >= count) return sameRegion;
+
+  const looserSameRegion = scored.filter(({ stop }) => {
+    if (!stop.coordinate) return false;
+    const stopRegion = routeRegionForStop(stop);
+    return (
+      (stopRegion === "unknown" ||
+        startRegion === "unknown" ||
+        stopRegion === startRegion) &&
+      distanceKm(startCoordinate, stop.coordinate) <= radiusKm + 0.9
+    );
+  });
+
+  if (looserSameRegion.length >= count) return looserSameRegion;
+
+  const anyNearby = scored.filter(
+    ({ stop }) =>
+      stop.coordinate &&
+      distanceKm(startCoordinate, stop.coordinate) <= radiusKm,
+  );
+
+  return anyNearby.length >= count ? anyNearby : scored;
+}
+
+function startRadiusKm(
+  track: ChallengeTrack,
+  count: QuestLength,
+  durationMinutes: number,
+): number {
+  const base = track.id === "crawl" ? 1.45 : track.id === "roulette" ? 1.8 : 2;
+  const stopBonus = Math.max(0, count - 3) * 0.22;
+  const windowBonus = durationMinutes >= 300 ? 0.35 : 0;
+  const max = track.id === "crawl" ? 2.25 : 2.9;
+  return Math.min(max, base + stopBonus + windowBonus);
 }
 
 function buildVariedAnchors(
@@ -2077,7 +2133,8 @@ function scoreStop(
 function repeatedBucketPenalty(stops: QuestStop[]): number {
   return (
     bucketRepeatPenalty(stops.map(cuisineBucket), 56) +
-    bucketRepeatPenalty(stops.map(areaBucket), 32)
+    bucketRepeatPenalty(stops.map(areaBucket), 32) +
+    mixedRegionPenalty(stops)
   );
 }
 
@@ -2133,6 +2190,115 @@ function areaBucket(stop: QuestStop): string {
     return `${stop.coordinate.latitude.toFixed(2)}:${stop.coordinate.longitude.toFixed(2)}`;
   }
   return "area-pending";
+}
+
+function mixedRegionPenalty(stops: QuestStop[]): number {
+  const regions = new Set(
+    stops
+      .map(routeRegionForStop)
+      .filter((region): region is Exclude<RouteRegion, "unknown"> =>
+        region !== "unknown",
+      ),
+  );
+
+  return regions.size > 1 ? (regions.size - 1) * 520 : 0;
+}
+
+function routeRegionForStop(stop: QuestStop): RouteRegion {
+  const label = normalize(stop.location?.label ?? "");
+  if (label) {
+    const labeledRegion = routeRegionForLabel(label);
+    if (labeledRegion !== "unknown") return labeledRegion;
+  }
+  return stop.coordinate ? routeRegionForCoordinate(stop.coordinate) : "unknown";
+}
+
+function routeRegionForLabel(label: string): RouteRegion {
+  if (
+    [
+      "brooklyn",
+      "williamsburg",
+      "greenpoint",
+      "bushwick",
+      "dumbo",
+      "fort greene",
+      "gowanus",
+      "cobble hill",
+      "boerum hill",
+      "bed-stuy",
+      "bedford",
+      "carroll gardens",
+      "park slope",
+      "prospect heights",
+    ].some((term) => label.includes(term))
+  ) {
+    return "brooklyn";
+  }
+
+  if (
+    [
+      "manhattan",
+      "new york",
+      "soho",
+      "flatiron",
+      "union sq",
+      "union square",
+      "east village",
+      "west village",
+      "lower east side",
+      "alphabet city",
+      "nolita",
+      "tribeca",
+      "chinatown",
+      "midtown",
+      "chelsea",
+      "bowery",
+      "noho",
+      "gramercy",
+    ].some((term) => label.includes(term))
+  ) {
+    return "manhattan";
+  }
+
+  if (
+    ["queens", "long island city", "astoria", "sunnyside"].some((term) =>
+      label.includes(term),
+    )
+  ) {
+    return "queens";
+  }
+
+  return "unknown";
+}
+
+function routeRegionForCoordinate(coordinate: Coordinate): RouteRegion {
+  const { latitude, longitude } = coordinate;
+  if (
+    latitude >= 40.69 &&
+    latitude <= 40.89 &&
+    longitude >= -74.03 &&
+    longitude <= -73.92
+  ) {
+    if (latitude < 40.735 && longitude > -73.965) return "brooklyn";
+    return "manhattan";
+  }
+  if (
+    latitude >= 40.62 &&
+    latitude <= 40.75 &&
+    longitude >= -74.05 &&
+    longitude <= -73.85
+  ) {
+    return "brooklyn";
+  }
+  if (
+    latitude >= 40.7 &&
+    latitude <= 40.82 &&
+    longitude > -73.95 &&
+    longitude <= -73.7
+  ) {
+    return "queens";
+  }
+  return "other";
 }
 
 function orderStopsByRoute(
