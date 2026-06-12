@@ -96,8 +96,6 @@ const DEFAULT_MEMBER_TASTE_PROFILE: GuestProfile = {
 
 const GUEST_PROFILE_STORAGE_KEY = "passport-quest:guest-profile:v1";
 const MEMBER_TASTE_PROFILE_STORAGE_KEY = "passport-quest:member-taste-profile:v1";
-const MIN_CUSTOM_WINDOW_MINUTES = 30;
-const MAX_CUSTOM_WINDOW_MINUTES = 7 * 24 * 60;
 
 const QUEST_WINDOW_PRESETS: QuestWindowPreset[] = [
   { minutes: 120, label: "2h", detail: "Quick" },
@@ -1000,16 +998,6 @@ function QuestWindowControl({
   durationMinutes: number;
   onDurationChange: (minutes: number) => void;
 }) {
-  const selectedPreset = QUEST_WINDOW_PRESETS.find(
-    (preset) => preset.minutes === durationMinutes,
-  );
-
-  function updateCustomWindow(hoursValue: string) {
-    const hours = Number(hoursValue);
-    if (!Number.isFinite(hours)) return;
-    onDurationChange(clampWindowMinutes(Math.round(hours * 60)));
-  }
-
   return (
     <ControlGroup label="Quest window">
       <div className="grid grid-cols-2 gap-2">
@@ -1032,30 +1020,6 @@ function QuestWindowControl({
           );
         })}
       </div>
-
-      <label
-        className={`mt-2 block rounded-xl border bg-background-darker p-3 transition ${
-          selectedPreset
-            ? "border-white/10"
-            : "border-primary/50 ring-1 ring-primary/20"
-        }`}
-      >
-        <span className="flex items-center justify-between gap-3">
-          <span className="text-xs font-medium text-subtle">Custom hours</span>
-          <span className="text-xs font-semibold text-foreground">
-            {formatMinutes(durationMinutes)}
-          </span>
-        </span>
-        <input
-          type="number"
-          min={MIN_CUSTOM_WINDOW_MINUTES / 60}
-          max={MAX_CUSTOM_WINDOW_MINUTES / 60}
-          step={0.5}
-          value={formatWindowHoursInput(durationMinutes)}
-          onChange={(event) => updateCustomWindow(event.target.value)}
-          className="mt-2 h-10 w-full rounded-lg border border-white/10 bg-surface-lowest px-3 text-sm font-semibold text-foreground outline-none transition placeholder:text-subtle focus:border-primary"
-        />
-      </label>
     </ControlGroup>
   );
 }
@@ -2236,18 +2200,6 @@ function buildGuestProfileLabel(preferences: string[]): string {
 function formatKm(km: number): string {
   if (!Number.isFinite(km) || km <= 0) return "Map pending";
   return `${km.toFixed(km >= 10 ? 0 : 1)} km`;
-}
-
-function clampWindowMinutes(minutes: number): number {
-  return Math.min(
-    MAX_CUSTOM_WINDOW_MINUTES,
-    Math.max(MIN_CUSTOM_WINDOW_MINUTES, minutes),
-  );
-}
-
-function formatWindowHoursInput(minutes: number): string {
-  const hours = clampWindowMinutes(minutes) / 60;
-  return Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
 }
 
 function formatCoordinate(coordinate: Coordinate): string {
