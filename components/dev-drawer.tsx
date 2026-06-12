@@ -267,27 +267,7 @@ export function DevDrawer() {
                     transition={{ duration: 0.18, ease: "easeOut" }}
                     className="space-y-6"
                   >
-                    {view === "setup" ? (
-                      <>
-                        <CredentialsStep />
-                        <NgrokStep />
-                        <NavCard
-                          title="Prompts"
-                          hint="The hackathon dev journey — which slash command to run, in order."
-                          onClick={() => setView("prompts")}
-                        />
-                        <NavCard
-                          title="Build progress"
-                          hint="Live task status for a /to-work run, polled from progress.json."
-                          onClick={() => setView("progress")}
-                        />
-                        <NavCard
-                          title="I'm ready to deploy"
-                          hint="Ship to Vercel — push, import, and set your env vars there."
-                          onClick={() => setView("deploy")}
-                        />
-                      </>
-                    ) : null}
+                    {view === "setup" ? <SetupView setView={setView} /> : null}
                     {view === "prompts" ? <PromptsView /> : null}
                     {view === "progress" ? <ProgressView /> : null}
                     {view === "deploy" ? <DeployView /> : null}
@@ -306,12 +286,42 @@ export function DevDrawer() {
   );
 }
 
+// ── Setup view ───────────────────────────────────────────────────────────────
+// Holds the two setup steps plus the nav cards. It owns a `credReloadToken` so
+// the ngrok step can poke the credentials step to refetch its status — used
+// when "Use as Redirect URI" writes REDIRECT_URI, so it flips to ✓ Configured
+// without the developer reopening the drawer.
+function SetupView({ setView }: { setView: (v: View) => void }) {
+  const [credReloadToken, setCredReloadToken] = useState(0);
+  return (
+    <>
+      <CredentialsStep reloadToken={credReloadToken} />
+      <NgrokStep onRedirectUriSaved={() => setCredReloadToken((t) => t + 1)} />
+      <NavCard
+        title="Prompts"
+        hint="The hackathon dev journey — which slash command to run, in order."
+        onClick={() => setView("prompts")}
+      />
+      <NavCard
+        title="Build progress"
+        hint="Live task status for a /to-work run, polled from progress.json."
+        onClick={() => setView("progress")}
+      />
+      <NavCard
+        title="I'm ready to deploy"
+        hint="Ship to Vercel — push, import, and set your env vars there."
+        onClick={() => setView("deploy")}
+      />
+    </>
+  );
+}
+
 // ── Step 1: Blackbird credentials ────────────────────────────────────────────
 // API key + OAuth client id/secret + redirect URI. Saving runs the secrets
 // through the live API (Discovery for the key, the OAuth token endpoint for the
 // client pair) and shape-checks the redirect URI before any of them are written
 // to .env.local — so a typo is caught here, not at runtime.
-function CredentialsStep() {
+function CredentialsStep({ reloadToken }: { reloadToken?: number }) {
   const [status, setStatus] = useState<CredStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [values, setValues] = useState<Partial<Record<CredField, string>>>({});
@@ -338,6 +348,12 @@ function CredentialsStep() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Refetch when a sibling step changes the env (e.g. ngrok writing
+  // REDIRECT_URI). Skip the initial 0 — the mount effect above already loaded.
+  useEffect(() => {
+    if (reloadToken) load();
+  }, [reloadToken, load]);
 
   const isShown = (f: CredField) => !status?.[f]?.isSet || editing[f];
   // Anything the developer has typed into a visible field.
@@ -495,19 +511,30 @@ function CredentialsStep() {
 }
 
 // ── Step 2: ngrok ────────────────────────────────────────────────────────────
-// Hand this to the agent so it does the whole tunnel setup — adds the authtoken,
-// starts the tunnel, and wires REDIRECT_URI — without the dev juggling a second
-// terminal. The dev pastes their token where marked before sending it.
+// Hand this to the agent so it does the tunnel setup — adds the authtoken and
+// starts the tunnel — without the dev juggling a second terminal. The agent
+// stops at reporting the URL: it never writes .env.local (the dev sets
+// REDIRECT_URI with the "Use as Redirect URI" button here). The dev pastes
+// their token where marked before sending it.
 const AGENT_TUNNEL_PROMPT =
   "My ngrok authtoken is: <paste it here>. Add it with " +
   "`ngrok config add-authtoken`, start a tunnel to port 3000 " +
-  "(`ngrok http 3000`), tell me the public https URL, and set REDIRECT_URI in " +
-  ".env.local to that URL plus /callback.";
+  "(`ngrok http 3000`), and tell me the public https URL. Don't touch " +
+  ".env.local — I'll set REDIRECT_URI from the dev setup drawer.";
 
-function NgrokStep() {
+function NgrokStep({
+  onRedirectUriSaved,
+}: {
+  onRedirectUriSaved?: () => void;
+}) {
   const [status, setStatus] = useState<NgrokStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [settingRedirect, setSettingRedirect] = useState(false);
+  const [redirectMsg, setRedirectMsg] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -533,6 +560,40 @@ function NgrokStep() {
       setTimeout(() => setCopied(false), 1500);
     } catch {
       // Clipboard can be blocked; the URL is visible regardless.
+    }
+  }
+
+  // Save the tunnel URL (+ /callback) straight into REDIRECT_URI via the same
+  // endpoint the credentials step uses, then tell that step to refresh so it
+  // shows the redirect URI as configured. The server validates the shape.
+  async function useAsRedirect() {
+    if (!status?.url) return;
+    const redirectUri = `${status.url.replace(/\/+$/, "")}/callback`;
+    setSettingRedirect(true);
+    setRedirectMsg(null);
+    try {
+      const res = await fetch("/api/dev/env", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ values: { REDIRECT_URI: redirectUri } }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          data.fieldErrors?.REDIRECT_URI ??
+            data.error ??
+            "Couldn't set the redirect URI.",
+        );
+      }
+      setRedirectMsg({ ok: true, text: "Saved ✓ — now whitelist it below ↓" });
+      onRedirectUriSaved?.();
+    } catch (e) {
+      setRedirectMsg({
+        ok: false,
+        text: e instanceof Error ? e.message : "Couldn't set it.",
+      });
+    } finally {
+      setSettingRedirect(false);
     }
   }
 
@@ -574,6 +635,27 @@ function NgrokStep() {
               {copied ? "Copied!" : "Copy"}
             </span>
           </button>
+
+          {/* One-click: write <tunnel>/callback into REDIRECT_URI so the dev
+              doesn't have to copy, append /callback, and paste it up top. */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={useAsRedirect}
+              disabled={settingRedirect}
+              className="inline-flex h-9 items-center justify-center rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:bg-primary-dim disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {settingRedirect ? "Setting…" : "Use as Redirect URI →"}
+            </button>
+            {redirectMsg ? (
+              <span
+                className={`text-xs ${redirectMsg.ok ? "text-success" : "text-failure"}`}
+              >
+                {redirectMsg.text}
+              </span>
+            ) : null}
+          </div>
+
           {/* The tunnel URL only works for OAuth once its /callback is
               whitelisted on the Blackbird side — point the dev at the self-serve
               portal so they can add it themselves. */}
@@ -629,9 +711,10 @@ function NgrokStep() {
             <CopyIconButton text={AGENT_TUNNEL_PROMPT} label="Copy prompt" />
           </div>
 
-          {/* Or do it by hand. */}
+          {/* Or do it by hand. Once it's up, Re-check and the "Use as Redirect
+              URI" button appears to set REDIRECT_URI for you. */}
           <p className="text-xs text-subtle">
-            Or run it yourself, then set REDIRECT_URI:
+            Or run it yourself, then Re-check above:
           </p>
           <div className="flex items-center gap-2 rounded-xl border border-strong bg-surface-low px-3 py-2">
             <code className="flex-1 font-mono text-xs text-foreground">
