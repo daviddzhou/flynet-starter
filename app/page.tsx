@@ -1,14 +1,13 @@
 import type { ReactNode } from "react";
 import { cookies } from "next/headers";
-import { FlynetDiscoveryClient, FlynetError } from "@flynetdev/core";
-import type { Restaurant } from "@flynetdev/react";
+import { FlynetError } from "@flynetdev/core";
 import { BirdMark, LoginButton, LogoutButton } from "../components";
 import { OpenDevSetupButton } from "../components/dev-drawer";
 import { PassportQuest } from "../components/passport-quest";
 import { ACCESS_COOKIE } from "../lib/auth";
+import { getCachedQuestRestaurantInputs } from "../lib/discovery-cache";
 import { env } from "../lib/env";
-import { listRestaurantLocations } from "../lib/locations";
-import { buildPassportQuest, prioritizeRestaurantsForTaste } from "../lib/quest";
+import { buildPassportQuest } from "../lib/quest";
 import { MemberPanel } from "./member-panel";
 
 export default async function Home({
@@ -77,30 +76,8 @@ async function renderPassportQuest(
 ): Promise<ReactNode> {
   if (!apiKey) return <SetupNotice />;
   try {
-    const discovery = new FlynetDiscoveryClient({
-      apiKey,
-      serverURL: env.API_BASE_URL,
-    });
-    const listed = await discovery.restaurants.listRestaurants({
-      pageSize: 100,
-    });
-    const restaurants = prioritizeRestaurantsForTaste(
-      (listed.restaurants as Restaurant[]).filter((restaurant) => restaurant.name),
-    ).slice(0, 75);
-
-    const locations = await Promise.all(
-      restaurants.map((restaurant) =>
-        listRestaurantLocations(apiKey, restaurant.id).catch(() => []),
-      ),
-    );
-
-    const quest = buildPassportQuest(
-      restaurants.map((restaurant, index) => ({
-        restaurant,
-        locations: locations[index],
-        checkInCount: null,
-      })),
-    );
+    const questInputs = await getCachedQuestRestaurantInputs(apiKey);
+    const quest = buildPassportQuest(questInputs);
 
     if (quest.stops.length < 5) {
       return (
