@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import type { Map as LeafletMap } from "leaflet";
 import type { Quest, QuestStop } from "../lib/quest";
 import { encodeShareSnapshot, type ShareQuestSnapshot } from "../lib/share";
+import { buildShareImagePath } from "../lib/share-meta";
 import { LoginButton } from "./login-button";
 import { RewardsPanel } from "./rewards-panel";
 import { Tag } from "./tag";
@@ -1368,6 +1369,15 @@ function MockChallengeCard({
 
 function ShareQuestCard({ snapshot }: { snapshot: ShareQuestSnapshot }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const shareImageLink = useMemo(() => {
+    const imagePath = buildShareImagePath(snapshot);
+
+    if (typeof window === "undefined") {
+      return imagePath;
+    }
+
+    return new URL(imagePath, window.location.origin).toString();
+  }, [snapshot]);
   const fallbackShareLink = useMemo(() => {
     if (typeof window === "undefined") {
       return "";
@@ -1439,6 +1449,15 @@ function ShareQuestCard({ snapshot }: { snapshot: ShareQuestSnapshot }) {
     }
   }
 
+  async function copyShareImageLink() {
+    try {
+      await writeClipboardText(shareImageLink);
+      setStatus("Copied share image link");
+    } catch {
+      setStatus("Share image opens in a new tab");
+    }
+  }
+
   return (
     <div className="rounded-xl border border-white/10 bg-background-darker p-3">
       <div className="flex items-start justify-between gap-3">
@@ -1487,6 +1506,23 @@ function ShareQuestCard({ snapshot }: { snapshot: ShareQuestSnapshot }) {
         >
           Open share page
         </a>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <a
+            href={shareImageLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-primary/35 bg-primary/10 px-3 text-xs font-semibold text-primary-bright transition hover:border-primary/70"
+          >
+            Open share image
+          </a>
+          <button
+            type="button"
+            onClick={copyShareImageLink}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-strong px-3 text-xs font-semibold text-foreground transition hover:border-primary/60"
+          >
+            Copy image link
+          </button>
+        </div>
       </div>
 
       <p className="mt-2 text-[11px] font-medium text-subtle">{status}</p>

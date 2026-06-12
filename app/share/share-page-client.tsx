@@ -4,11 +4,17 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
+import { BirdMark } from "../../components/bird-mark";
 import {
   decodeShareSnapshot,
   isShareSnapshot,
   type ShareQuestSnapshot,
 } from "../../lib/share";
+import {
+  buildShareDescription,
+  buildShareImagePath,
+  buildShareTitle,
+} from "../../lib/share-meta";
 
 type SharePageClientProps = {
   encoded: string | null;
@@ -92,6 +98,10 @@ export function SharePageClient({
 }
 
 function ShareItinerary({ snapshot }: { snapshot: ShareQuestSnapshot }) {
+  const shareDescription = buildShareDescription(snapshot);
+  const shareImageHref = buildShareImagePath(snapshot);
+  const shareTitle = buildShareTitle(snapshot);
+  const [imageStatus, setImageStatus] = useState("Share image ready");
   const generatedDate = new Date(snapshot.generatedAt);
   const generatedAt = Number.isNaN(generatedDate.getTime())
     ? "recently"
@@ -101,6 +111,17 @@ function ShareItinerary({ snapshot }: { snapshot: ShareQuestSnapshot }) {
         hour: "numeric",
         minute: "2-digit",
       }).format(generatedDate);
+
+  async function copyShareImageLink() {
+    try {
+      await navigator.clipboard.writeText(
+        new URL(shareImageHref, window.location.href).toString(),
+      );
+      setImageStatus("Copied image link");
+    } catch {
+      setImageStatus("Open image link ready");
+    }
+  }
 
   return (
     <main className="min-h-screen overflow-hidden bg-background-darker text-foreground">
@@ -217,16 +238,22 @@ function ShareItinerary({ snapshot }: { snapshot: ShareQuestSnapshot }) {
         </section>
 
         <aside className="rounded-3xl border border-white/10 bg-surface-low p-5 shadow-[0_24px_80px_rgb(0_0_0/0.35)] lg:sticky lg:top-6">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-xl font-black text-primary-foreground">
-            PQ
+          <div className="flex h-12 w-14 items-center justify-center rounded-2xl border border-white/10 bg-background-darker text-foreground">
+            <BirdMark size={32} />
           </div>
           <h2 className="mt-5 text-2xl font-black tracking-tight text-foreground">
             Quest pass
           </h2>
           <p className="mt-3 text-sm leading-6 text-muted">
-            Share this route with the group, then open Maps when everyone is
-            ready to move.
+            {shareDescription}
           </p>
+
+          <div className="mt-5 rounded-2xl border border-primary/25 bg-primary/10 p-4">
+            <p className="text-xs font-bold text-primary-bright">Share title</p>
+            <p className="mt-1 text-base font-black leading-tight text-foreground">
+              {shareTitle}
+            </p>
+          </div>
 
           <div className="mt-5 rounded-2xl border border-success/20 bg-success/10 p-4">
             <p className="text-xs font-bold text-success">Rewards status</p>
@@ -252,7 +279,25 @@ function ShareItinerary({ snapshot }: { snapshot: ShareQuestSnapshot }) {
             <Link className={secondaryButtonClassName} href="/">
               Build your own
             </Link>
+            <a
+              className={secondaryButtonClassName}
+              href={shareImageHref}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Open share image
+            </a>
+            <button
+              className={secondaryButtonClassName}
+              onClick={copyShareImageLink}
+              type="button"
+            >
+              Copy image link
+            </button>
           </div>
+          <p className="mt-2 text-[11px] font-medium text-subtle">
+            {imageStatus}
+          </p>
         </aside>
       </div>
     </main>
