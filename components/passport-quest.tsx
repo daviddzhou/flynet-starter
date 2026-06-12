@@ -15,6 +15,14 @@ type ChallengeTrackId = "classic" | "roulette" | "crawl";
 type ProfileMode = "member" | "guest";
 type GuestProfileStatus = "draft" | "created";
 type RouteRegion = "manhattan" | "brooklyn" | "queens" | "other" | "unknown";
+type LocationStatus =
+  | "idle"
+  | "locating"
+  | "ready"
+  | "far"
+  | "unsupported"
+  | "denied"
+  | "error";
 
 type GuestProfile = {
   name: string;
@@ -73,6 +81,7 @@ const DEFAULT_MEMBER_TASTE_PROFILE: GuestProfile = {
 
 const GUEST_PROFILE_STORAGE_KEY = "passport-quest:guest-profile:v1";
 const MEMBER_TASTE_PROFILE_STORAGE_KEY = "passport-quest:member-taste-profile:v1";
+const CURRENT_LOCATION_ROUTE_RADIUS_KM = 35;
 const QUEST_LENGTH_OPTIONS: QuestLength[] = [2, 3, 4, 5, 6, 7];
 
 const QUEST_WINDOW_PRESETS: QuestWindowPreset[] = [
@@ -211,6 +220,11 @@ export function PassportQuest({
     null,
   );
   const [isPickingStartPoint, setIsPickingStartPoint] = useState(false);
+  const [locationStatus, setLocationStatus] =
+    useState<LocationStatus>("idle");
+  const [locationMessage, setLocationMessage] = useState(
+    "Optional. Uses your browser location only for route ordering.",
+  );
   const [checkedStopKeys, setCheckedStopKeys] = useState<string[]>([]);
 
   const activeTrack =
@@ -449,6 +463,7 @@ export function PassportQuest({
   function selectStartPreset(preset: StartPointPreset) {
     setManualStartPoint(startPointFromPreset(preset));
     setIsPickingStartPoint(false);
+    resetLocationStatus();
     setChallengeGenerated(false);
     setCheckedStopKeys([]);
   }
@@ -456,8 +471,111 @@ export function PassportQuest({
   function useAutoStartPoint() {
     setManualStartPoint(null);
     setIsPickingStartPoint(false);
+    resetLocationStatus();
     setChallengeGenerated(false);
     setCheckedStopKeys([]);
+  }
+
+  function resetLocationStatus() {
+    setLocationStatus("idle");
+    setLocationMessage(
+      "Optional. Uses your browser location only for route ordering.",
+    );
+  }
+
+  function useCurrentLocation() {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setLocationStatus("unsupported");
+      setLocationMessage("This browser does not support location detection.");
+      return;
+    }
+
+    setLocationStatus("locating");
+    setLocationMessage("Waiting for browser permission...");
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const coordinate = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        };
+        const nearestKm = nearestStopDistanceKm(coordinate, quest.stops);
+
+        if (
+          nearestKm !== null &&
+          nearestKm > CURRENT_LOCATION_ROUTE_RADIUS_KM
+        ) {
+          setLocationStatus("far");
+          setLocationMessage(
+            `Location detected, but it is ${formatKm(nearestKm)} from this restaurant set. Pick a neighborhood or map point for the demo route.`,
+          );
+          return;
+        }
+
+        const locationRoute = selectStops({
+          count: questLength,
+          durationMinutes,
+          generation,
+          preferences: activePreferences,
+          recentStopKeys: recentRouteStopKeys,
+          startCoordinate: coordinate,
+          stops: quest.stops,
+          track: activeTrack,
+        });
+        const firstMappedStop = locationRoute.find(hasCoordinate);
+        const firstLegKm = firstMappedStop
+          ? distanceKm(coordinate, firstMappedStop.coordinate)
+          : null;
+
+        if (
+          firstLegKm === null ||
+          firstLegKm > CURRENT_LOCATION_ROUTE_RADIUS_KM
+        ) {
+          setLocationStatus("far");
+          setLocationMessage(
+            firstLegKm === null
+              ? "Location detected, but the route could not find mapped restaurants near you. Pick a neighborhood or map point for the demo route."
+              : `Location detected, but the generated route would start ${formatKm(firstLegKm)} away. Pick a neighborhood or map point for the demo route.`,
+          );
+          return;
+        }
+
+        setManualStartPoint({
+          kind: "start",
+          name: "Current location",
+          label: "Current location",
+          coordinate,
+        });
+        setIsPickingStartPoint(false);
+        setLocationStatus("ready");
+        setLocationMessage(
+          nearestKm === null
+            ? "Using your browser location. You can still pick a different start point."
+            : `Using your browser location, ${formatKm(nearestKm)} from the nearest restaurant. You can still pick a different start point.`,
+        );
+        setChallengeGenerated(false);
+        setCheckedStopKeys([]);
+      },
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          setLocationStatus("denied");
+          setLocationMessage(
+            "Location permission was not allowed. Pick a neighborhood or tap the map instead.",
+          );
+          return;
+        }
+
+        setLocationStatus("error");
+        setLocationMessage(
+          "Location could not be detected. Pick a neighborhood or tap the map instead.",
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 60_000,
+        timeout: 10_000,
+      },
+    );
   }
 
   const handleMapStartPointPick = useCallback((coordinate: Coordinate) => {
@@ -468,6 +586,8 @@ export function PassportQuest({
       coordinate,
     });
     setIsPickingStartPoint(false);
+    setLocationStatus("idle");
+    setLocationMessage("Map start selected. You can still use current location.");
     setChallengeGenerated(false);
     setCheckedStopKeys([]);
   }, []);
@@ -597,7 +717,10 @@ export function PassportQuest({
             <StartPointControl
               startPoint={manualStartPoint}
               isPicking={isPickingStartPoint}
+              locationStatus={locationStatus}
+              locationMessage={locationMessage}
               onAutoStart={useAutoStartPoint}
+              onUseCurrentLocation={useCurrentLocation}
               onPickFromMap={() =>
                 setIsPickingStartPoint((current) => !current)
               }
@@ -1057,16 +1180,32 @@ function QuestWindowControl({
 function StartPointControl({
   startPoint,
   isPicking,
+  locationStatus,
+  locationMessage,
   onAutoStart,
+  onUseCurrentLocation,
   onPickFromMap,
   onPresetStart,
 }: {
   startPoint: RoutePoint | null;
   isPicking: boolean;
+  locationStatus: LocationStatus;
+  locationMessage: string;
   onAutoStart: () => void;
+  onUseCurrentLocation: () => void;
   onPickFromMap: () => void;
   onPresetStart: (preset: StartPointPreset) => void;
 }) {
+  const locationTone =
+    locationStatus === "ready"
+      ? "text-success"
+      : locationStatus === "far" ||
+          locationStatus === "unsupported" ||
+          locationStatus === "denied" ||
+          locationStatus === "error"
+        ? "text-brand-yellow"
+        : "text-subtle";
+
   return (
     <ControlGroup label="Start point">
       <div className="grid grid-cols-2 gap-2">
@@ -1115,6 +1254,19 @@ function StartPointControl({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            onClick={onUseCurrentLocation}
+            disabled={locationStatus === "locating"}
+            className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-3 text-xs font-semibold transition ${
+              startPoint?.label === "Current location"
+                ? "border border-success/40 bg-success/10 text-success"
+                : "border border-white/10 text-muted hover:border-white/20 hover:text-foreground disabled:cursor-wait disabled:opacity-70"
+            }`}
+          >
+            <LocateIcon className="h-3.5 w-3.5" />
+            {locationStatus === "locating" ? "Detecting..." : "Use my location"}
+          </button>
+          <button
+            type="button"
             onClick={onPickFromMap}
             className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-3 text-xs font-semibold transition ${
               isPicking
@@ -1135,6 +1287,9 @@ function StartPointControl({
             </button>
           ) : null}
         </div>
+        <p className={`text-xs leading-relaxed ${locationTone}`}>
+          {locationMessage}
+        </p>
       </div>
     </ControlGroup>
   );
@@ -2497,6 +2652,20 @@ function maxPairwiseDistanceKm(stops: QuestStop[]): number {
   return maxDistance;
 }
 
+function nearestStopDistanceKm(
+  coordinate: Coordinate,
+  stops: QuestStop[],
+): number | null {
+  let nearest = Number.POSITIVE_INFINITY;
+
+  stops.forEach((stop) => {
+    if (!hasCoordinate(stop)) return;
+    nearest = Math.min(nearest, distanceKm(coordinate, stop.coordinate));
+  });
+
+  return Number.isFinite(nearest) ? nearest : null;
+}
+
 function buildRouteMetrics(
   stops: QuestStop[],
   startPointOverride: RoutePoint | null = null,
@@ -2957,6 +3126,21 @@ function MapPinIcon({ className = "" }: { className?: string }) {
         strokeLinejoin="round"
       />
       <circle cx="12" cy="10" r="2.5" fill="currentColor" />
+    </svg>
+  );
+}
+
+function LocateIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+      <path
+        d="M12 3v3M12 18v3M3 12h3M18 12h3"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.6" />
     </svg>
   );
 }
