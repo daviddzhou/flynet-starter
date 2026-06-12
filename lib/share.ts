@@ -58,7 +58,7 @@ export function decodeShareSnapshot(encoded?: string | null): ShareQuestSnapshot
   }
 }
 
-function isShareSnapshot(value: unknown): value is ShareQuestSnapshot {
+export function isShareSnapshot(value: unknown): value is ShareQuestSnapshot {
   if (!isRecord(value)) {
     return false;
   }

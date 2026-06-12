@@ -1368,7 +1368,7 @@ function MockChallengeCard({
 
 function ShareQuestCard({ snapshot }: { snapshot: ShareQuestSnapshot }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const shareLink = useMemo(() => {
+  const fallbackShareLink = useMemo(() => {
     if (typeof window === "undefined") {
       return "";
     }
@@ -1377,15 +1377,55 @@ function ShareQuestCard({ snapshot }: { snapshot: ShareQuestSnapshot }) {
     url.searchParams.set("q", encodeShareSnapshot(snapshot));
     return url.toString();
   }, [snapshot]);
+  const [shareLink, setShareLink] = useState("");
   const [status, setStatus] = useState("Ready to copy");
 
   useEffect(() => {
-    setStatus("Ready to copy");
-  }, [snapshot.challengeId]);
+    let cancelled = false;
+    setShareLink("");
+    setStatus("Renewing short link");
+
+    async function createShortShareLink() {
+      if (typeof window === "undefined") return;
+
+      try {
+        const response = await fetch("/api/share", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ snapshot }),
+        });
+
+        if (!response.ok) throw new Error("Share API failed");
+
+        const payload = (await response.json()) as { id?: unknown };
+        if (typeof payload.id !== "string" || payload.id.length === 0) {
+          throw new Error("Missing share id");
+        }
+
+        const url = new URL("/share", window.location.origin);
+        url.searchParams.set("id", payload.id);
+        if (!cancelled) {
+          setShareLink(url.toString());
+          setStatus("Fresh short link ready");
+        }
+      } catch {
+        if (!cancelled) {
+          setShareLink(fallbackShareLink);
+          setStatus("Short link unavailable, fallback ready");
+        }
+      }
+    }
+
+    void createShortShareLink();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fallbackShareLink, snapshot]);
 
   async function copyShareLink() {
     if (!shareLink) {
-      setStatus("Share link unavailable");
+      setStatus("Still renewing link");
       return;
     }
 
@@ -1424,24 +1464,26 @@ function ShareQuestCard({ snapshot }: { snapshot: ShareQuestSnapshot }) {
         <input
           ref={inputRef}
           aria-label="Shareable itinerary link"
-          value={shareLink}
+          value={shareLink || "Generating fresh share link..."}
           readOnly
           onFocus={(event) => event.currentTarget.select()}
           className="h-9 w-full rounded-full border border-white/10 bg-black/20 px-3 text-[11px] font-medium text-muted outline-none transition focus:border-primary/60 focus:text-foreground"
         />
         <button
           type="button"
+          disabled={!shareLink}
           onClick={copyShareLink}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-foreground px-3 text-sm font-semibold text-background transition hover:opacity-90"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-foreground px-3 text-sm font-semibold text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <CopyIcon className="h-4 w-4" />
-          Copy share link
+          Copy short link
         </button>
         <a
           href={shareLink || undefined}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-strong px-3 text-xs font-semibold text-foreground transition hover:border-primary/60"
+          aria-disabled={!shareLink}
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-strong px-3 text-xs font-semibold text-foreground transition hover:border-primary/60 aria-disabled:pointer-events-none aria-disabled:opacity-50"
         >
           Open share page
         </a>
