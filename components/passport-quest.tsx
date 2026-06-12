@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Map as LeafletMap } from "leaflet";
 import type { Quest, QuestStop } from "../lib/quest";
+import { encodeShareSnapshot, type ShareQuestSnapshot } from "../lib/share";
 import { LoginButton } from "./login-button";
 import { RewardsPanel } from "./rewards-panel";
 import { Tag } from "./tag";
@@ -25,30 +26,6 @@ type RoutePoint = {
   name: string;
   label: string;
   coordinate: Coordinate;
-};
-
-type ShareQuestStop = {
-  order: number;
-  name: string;
-  cuisines: string;
-  locationLabel: string;
-  addressLine: string;
-  legLabel: string;
-};
-
-type ShareQuestSnapshot = {
-  challengeId: string;
-  trackLabel: string;
-  profileName: string;
-  stopCount: number;
-  windowLabel: string;
-  cadenceLabel: string;
-  routeDistanceLabel: string;
-  routeTimeLabel: string;
-  rewardFly: number;
-  completed: boolean;
-  directionsUrl: string | null;
-  stops: ShareQuestStop[];
 };
 
 type ChallengeTrack = {
@@ -1400,46 +1377,35 @@ function MockChallengeCard({
 }
 
 function ShareQuestCard({ snapshot }: { snapshot: ShareQuestSnapshot }) {
-  const [status, setStatus] = useState("Ready to share");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const shareLink = useMemo(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+
+    const url = new URL("/share", window.location.origin);
+    url.searchParams.set("q", encodeShareSnapshot(snapshot));
+    return url.toString();
+  }, [snapshot]);
+  const [status, setStatus] = useState("Ready to copy");
 
   useEffect(() => {
-    setStatus("Ready to share");
+    setStatus("Ready to copy");
   }, [snapshot.challengeId]);
 
-  async function copyItinerary() {
-    try {
-      await writeClipboardText(createShareText(snapshot));
-      setStatus("Copied itinerary");
-    } catch {
-      setStatus("Copy failed");
+  async function copyShareLink() {
+    if (!shareLink) {
+      setStatus("Share link unavailable");
+      return;
     }
-  }
 
-  async function shareItinerary() {
-    const text = createShareText(snapshot);
-    if (typeof navigator.share === "function") {
-      try {
-        await navigator.share({
-          title: `Passport Quest ${snapshot.challengeId}`,
-          text,
-          url: snapshot.directionsUrl ?? undefined,
-        });
-        setStatus("Share sheet opened");
-        return;
-      } catch {
-        setStatus("Share canceled");
-        return;
-      }
-    }
-    await copyItinerary();
-  }
-
-  function downloadPage() {
     try {
-      downloadSharePage(snapshot);
-      setStatus("Standalone page downloaded");
+      await writeClipboardText(shareLink);
+      setStatus("Copied share link");
     } catch {
-      setStatus("Download failed");
+      inputRef.current?.focus();
+      inputRef.current?.select();
+      setStatus("Copy blocked, link selected");
     }
   }
 
@@ -1460,37 +1426,35 @@ function ShareQuestCard({ snapshot }: { snapshot: ShareQuestSnapshot }) {
       </div>
 
       <p className="mt-2 text-xs leading-relaxed text-muted">
-        Copy the itinerary for Slack, use the system share sheet, or download a
-        static HTML page that opens after this dev server is offline.
+        Copy a lightweight itinerary link with the route, restaurants in order,
+        and Google Maps directions.
       </p>
 
       <div className="mt-3 grid gap-2">
+        <input
+          ref={inputRef}
+          aria-label="Shareable itinerary link"
+          value={shareLink}
+          readOnly
+          onFocus={(event) => event.currentTarget.select()}
+          className="h-9 w-full rounded-full border border-white/10 bg-black/20 px-3 text-[11px] font-medium text-muted outline-none transition focus:border-primary/60 focus:text-foreground"
+        />
         <button
           type="button"
-          onClick={shareItinerary}
+          onClick={copyShareLink}
           className="inline-flex h-9 items-center justify-center gap-2 rounded-full bg-foreground px-3 text-sm font-semibold text-background transition hover:opacity-90"
         >
-          <ShareIcon className="h-4 w-4" />
-          Share
+          <CopyIcon className="h-4 w-4" />
+          Copy share link
         </button>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={copyItinerary}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-strong px-3 text-xs font-semibold text-foreground transition hover:border-primary/60"
-          >
-            <CopyIcon className="h-3.5 w-3.5" />
-            Copy text
-          </button>
-          <button
-            type="button"
-            onClick={downloadPage}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3 text-xs font-semibold text-primary-bright transition hover:bg-primary/15"
-          >
-            <DownloadIcon className="h-3.5 w-3.5" />
-            Download page
-          </button>
-        </div>
+        <a
+          href={shareLink || undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-strong px-3 text-xs font-semibold text-foreground transition hover:border-primary/60"
+        >
+          Open share page
+        </a>
       </div>
 
       <p className="mt-2 text-[11px] font-medium text-subtle">{status}</p>
@@ -2365,55 +2329,31 @@ function buildShareSnapshot({
   directionsUrl: string | null;
 }): ShareQuestSnapshot {
   return {
+    title: `${profileName} ${track.label}`,
     challengeId,
     trackLabel: track.label,
-    profileName,
     stopCount: stops.length,
     windowLabel: formatMinutes(durationMinutes),
     cadenceLabel,
-    routeDistanceLabel: formatKm(metrics.totalKm),
-    routeTimeLabel: formatMinutes(metrics.totalMinutes),
-    rewardFly,
+    routeSummary: `${formatKm(metrics.totalKm)} route, ${formatMinutes(metrics.totalMinutes)} estimated walk`,
+    rewardLabel: `+${rewardFly} FLY ${completed ? "mock unlocked" : "preview"}`,
     completed,
     directionsUrl,
+    generatedAt: new Date().toISOString(),
     stops: stops.map((stop, index) => {
       const segment = metrics.segments[index];
       return {
-        order: stop.order,
+        index: stop.order,
         name: stop.name,
         cuisines: stop.cuisines.slice(0, 3).join(", ") || "Restaurant",
         locationLabel: stop.location?.label ?? "Location pending",
-        addressLine: stop.location?.addressLine ?? "",
+        addressLine: stop.location?.addressLine ?? null,
         legLabel: segment
           ? `${formatMinutes(segment.minutes)} walk from ${segment.from.label}`
           : "Directions pending",
       };
     }),
   };
-}
-
-function createShareText(snapshot: ShareQuestSnapshot): string {
-  const routeUrl = snapshot.directionsUrl ?? "Directions pending";
-  const completion = snapshot.completed ? "mock unlocked" : "armed";
-  const stops = snapshot.stops
-    .map((stop) => {
-      const address = stop.addressLine ? `, ${stop.addressLine}` : "";
-      return `${stop.order}. ${stop.name} - ${stop.cuisines} - ${stop.locationLabel}${address}\n   ${stop.legLabel}`;
-    })
-    .join("\n");
-
-  return [
-    `Passport Quest: ${snapshot.trackLabel}`,
-    `Challenge: ${snapshot.challengeId}`,
-    `Profile: ${snapshot.profileName}`,
-    `${snapshot.stopCount} stops, ${snapshot.windowLabel}, ${snapshot.cadenceLabel}`,
-    `Route: ${snapshot.routeDistanceLabel}, ${snapshot.routeTimeLabel}`,
-    `Reward preview: +${snapshot.rewardFly} FLY ${completion}`,
-    `Google Maps route: ${routeUrl}`,
-    "",
-    "Restaurants in order:",
-    stops,
-  ].join("\n");
 }
 
 async function writeClipboardText(text: string) {
@@ -2434,130 +2374,6 @@ async function writeClipboardText(text: string) {
     textarea.remove();
     if (!copied) throw new Error("copy failed");
   }
-}
-
-function downloadSharePage(snapshot: ShareQuestSnapshot) {
-  const blob = new Blob([createShareHtml(snapshot)], {
-    type: "text/html;charset=utf-8",
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${snapshot.challengeId.toLowerCase()}-passport-quest.html`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function createShareHtml(snapshot: ShareQuestSnapshot): string {
-  const directions = snapshot.directionsUrl
-    ? `<a class="button" href="${escapeHtml(snapshot.directionsUrl)}" target="_blank" rel="noopener noreferrer">Open Google Maps route</a>`
-    : `<span class="button button-muted">Directions pending</span>`;
-  const stops = snapshot.stops
-    .map(
-      (stop) => `
-        <li>
-          <span class="number">${stop.order}</span>
-          <div>
-            <h2>${escapeHtml(stop.name)}</h2>
-            <p>${escapeHtml(stop.cuisines)}</p>
-            <p>${escapeHtml(stop.locationLabel)}</p>
-            ${
-              stop.addressLine
-                ? `<p>${escapeHtml(stop.addressLine)}</p>`
-                : ""
-            }
-            <p class="leg">${escapeHtml(stop.legLabel)}</p>
-          </div>
-        </li>`,
-    )
-    .join("");
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(snapshot.trackLabel)} - ${escapeHtml(snapshot.challengeId)}</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #0b0b0b;
-      --panel: #171717;
-      --line: rgba(255, 255, 255, 0.12);
-      --text: #fcfcfc;
-      --muted: #ababab;
-      --primary: #755bff;
-      --primary-soft: #c8bfff;
-      --success: #2ce198;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.5;
-    }
-    main { max-width: 820px; margin: 0 auto; padding: 32px 18px 48px; }
-    header {
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      background: linear-gradient(135deg, rgba(117, 91, 255, 0.22), rgba(44, 225, 152, 0.08)), var(--panel);
-      padding: 22px;
-    }
-    .eyebrow { color: var(--primary-soft); font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
-    h1 { margin: 6px 0 8px; font-size: clamp(30px, 6vw, 56px); line-height: 0.95; letter-spacing: -0.03em; }
-    p { margin: 0; color: var(--muted); }
-    .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 10px; margin: 18px 0; }
-    .meta div { border: 1px solid var(--line); border-radius: 12px; padding: 10px; background: rgba(0, 0, 0, 0.24); }
-    .meta span { display: block; color: var(--muted); font-size: 12px; }
-    .meta strong { display: block; margin-top: 2px; color: var(--text); }
-    .button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 42px;
-      border-radius: 999px;
-      background: var(--primary);
-      color: #000;
-      font-weight: 800;
-      padding: 0 16px;
-      text-decoration: none;
-    }
-    .button-muted { background: transparent; color: var(--muted); border: 1px solid var(--line); }
-    ol { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 12px; }
-    li { display: grid; grid-template-columns: 42px 1fr; gap: 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); padding: 14px; }
-    .number { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 999px; background: var(--text); color: var(--bg); font-weight: 900; }
-    h2 { margin: 0 0 4px; font-size: 18px; }
-    .leg { margin-top: 8px; color: var(--success); font-weight: 700; }
-    footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div class="eyebrow">Passport Quest</div>
-      <h1>${escapeHtml(snapshot.trackLabel)}</h1>
-      <p>${escapeHtml(snapshot.challengeId)} for ${escapeHtml(snapshot.profileName)}</p>
-      <div class="meta">
-        <div><span>Stops</span><strong>${snapshot.stopCount}</strong></div>
-        <div><span>Window</span><strong>${escapeHtml(snapshot.windowLabel)}</strong></div>
-        <div><span>Cadence</span><strong>${escapeHtml(snapshot.cadenceLabel)}</strong></div>
-        <div><span>Route</span><strong>${escapeHtml(snapshot.routeDistanceLabel)}, ${escapeHtml(snapshot.routeTimeLabel)}</strong></div>
-        <div><span>Reward preview</span><strong>+${snapshot.rewardFly} FLY</strong></div>
-        <div><span>Status</span><strong>${snapshot.completed ? "Mock unlocked" : "Armed"}</strong></div>
-      </div>
-      ${directions}
-    </header>
-    <ol>${stops}</ol>
-    <footer>
-      Static share page generated by Passport Quest. No Rewards API issuance is included.
-    </footer>
-  </main>
-</body>
-</html>`;
 }
 
 function buildRewardFly(
@@ -2785,22 +2601,6 @@ function CheckIcon({ className = "" }: { className?: string }) {
   );
 }
 
-function ShareIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
-      <path
-        d="M8.5 13.5 15.5 17.5M15.5 6.5 8.5 10.5"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="2"
-      />
-      <circle cx="6.5" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
-      <circle cx="17.5" cy="5.5" r="3" stroke="currentColor" strokeWidth="2" />
-      <circle cx="17.5" cy="18.5" r="3" stroke="currentColor" strokeWidth="2" />
-    </svg>
-  );
-}
-
 function CopyIcon({ className = "" }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
@@ -2817,20 +2617,6 @@ function CopyIcon({ className = "" }: { className?: string }) {
         d="M5 15V7a2 2 0 0 1 2-2h8"
         stroke="currentColor"
         strokeLinecap="round"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
-
-function DownloadIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
-      <path
-        d="M12 4v10M8 10l4 4 4-4M5 19h14"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
         strokeWidth="2"
       />
     </svg>
