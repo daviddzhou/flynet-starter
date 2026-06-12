@@ -1,4 +1,5 @@
 import "./globals.css";
+import "leaflet/dist/leaflet.css";
 // The Flynet component theme. Import it once, at the root.
 import "@flynetdev/react/styles.css";
 import type { ReactNode } from "react";
@@ -10,8 +11,11 @@ import { env } from "../lib/env";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Flynet Starter",
-  description: "A minimal app built on the Flynet SDK.",
+  title: "Passport Quest",
+  description: "A consumer discovery quest demo built on Flynet.",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

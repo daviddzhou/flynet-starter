@@ -35,7 +35,10 @@ export async function getRestaurantCheckInCount(
     // filter names are silently ignored and return the full feed).
     const res = await fetch(
       `${DISCOVERY_URL}/check_ins?restaurant=${restaurantId}&page_size=1`,
-      { headers: { "X-API-Key": apiKey, "User-Agent": BROWSER_UA } },
+      {
+        headers: { "X-API-Key": apiKey, "User-Agent": BROWSER_UA },
+        signal: AbortSignal.timeout(2500),
+      },
     );
     if (!res.ok) {
       if (
