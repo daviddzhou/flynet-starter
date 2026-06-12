@@ -594,6 +594,16 @@ export function PassportQuest({
               </div>
             </ControlGroup>
 
+            <StartPointControl
+              startPoint={manualStartPoint}
+              isPicking={isPickingStartPoint}
+              onAutoStart={useAutoStartPoint}
+              onPickFromMap={() =>
+                setIsPickingStartPoint((current) => !current)
+              }
+              onPresetStart={selectStartPreset}
+            />
+
             <ControlGroup label="Stops">
               <div className="grid rounded-xl border border-white/10 bg-background-darker p-1" style={{ gridTemplateColumns: `repeat(${QUEST_LENGTH_OPTIONS.length}, minmax(0, 1fr))` }}>
                 {QUEST_LENGTH_OPTIONS.map((length) => (
@@ -616,16 +626,6 @@ export function PassportQuest({
             <QuestWindowControl
               durationMinutes={durationMinutes}
               onDurationChange={selectDurationMinutes}
-            />
-
-            <StartPointControl
-              startPoint={manualStartPoint}
-              isPicking={isPickingStartPoint}
-              onAutoStart={useAutoStartPoint}
-              onPickFromMap={() =>
-                setIsPickingStartPoint((current) => !current)
-              }
-              onPresetStart={selectStartPreset}
             />
 
             <div className="grid grid-cols-2 gap-2">
