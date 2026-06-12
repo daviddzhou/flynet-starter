@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 
 // Developer onboarding drawer. Renders only in dev (layout.tsx gates it on
 // NODE_ENV), and its backend routes 404 in production too. It has three views,
@@ -129,84 +130,122 @@ export function DevDrawer() {
         Dev Setup
       </button>
 
-      {/* Scrim */}
-      <div
-        onClick={() => setOpen(false)}
-        aria-hidden
-        className={`fixed inset-0 z-40 bg-black/60 transition-opacity duration-200 ease-standard ${
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-      />
+      {/* Scrim + panel mount/unmount together, animated by framer-motion. */}
+      <AnimatePresence>
+        {open ? (
+          <>
+            <motion.div
+              key="scrim"
+              onClick={close}
+              aria-hidden
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-40 bg-black/60"
+            />
 
-      {/* Panel */}
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label="Developer setup"
-        className={`fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-strong bg-background-darker transition-transform duration-200 ease-standard ${
-          open ? "translate-x-0" : "translate-x-full"
-        }`}
-      >
-        <header className="flex items-start justify-between gap-4 border-b border-strong p-6">
-          <div className="flex items-start gap-3">
-            {/* Back to setup from a sub-view. */}
-            {view !== "setup" ? (
-              <button
-                type="button"
-                onClick={() => setView("setup")}
-                className="-ml-2 mt-0.5 rounded-full p-2 text-muted transition hover:bg-surface hover:text-foreground"
-                aria-label="Back to setup"
-              >
-                ←
-              </button>
-            ) : null}
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-primary-bright">
-                {HEADER[view].eyebrow}
-              </p>
-              <h2 className="mt-1 text-lg font-semibold tracking-tight">
-                {HEADER[view].title}
-              </h2>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={close}
-            className="-mr-2 -mt-1 rounded-full p-2 text-muted transition hover:bg-surface hover:text-foreground"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </header>
+            <motion.aside
+              key="panel"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Developer setup"
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 32, stiffness: 320 }}
+              className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-strong bg-background-darker"
+            >
+              <header className="flex items-start justify-between gap-4 border-b border-strong p-6">
+                <div className="flex items-start gap-3">
+                  {/* Back to setup from a sub-view. */}
+                  <AnimatePresence initial={false}>
+                    {view !== "setup" ? (
+                      <motion.button
+                        key="back"
+                        type="button"
+                        onClick={() => setView("setup")}
+                        initial={{ opacity: 0, width: 0 }}
+                        animate={{ opacity: 1, width: "auto" }}
+                        exit={{ opacity: 0, width: 0 }}
+                        transition={{ duration: 0.15 }}
+                        className="-ml-2 mt-0.5 overflow-hidden rounded-full p-2 text-muted transition hover:bg-surface hover:text-foreground"
+                        aria-label="Back to setup"
+                      >
+                        ←
+                      </motion.button>
+                    ) : null}
+                  </AnimatePresence>
+                  {/* Header copy crossfades as the view changes. */}
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.div
+                      key={view}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      <p className="text-xs uppercase tracking-[0.2em] text-primary-bright">
+                        {HEADER[view].eyebrow}
+                      </p>
+                      <h2 className="mt-1 text-lg font-semibold tracking-tight">
+                        {HEADER[view].title}
+                      </h2>
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+                <button
+                  type="button"
+                  onClick={close}
+                  className="-mr-2 -mt-1 rounded-full p-2 text-muted transition hover:bg-surface hover:text-foreground"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </header>
 
-        <div className="flex-1 space-y-6 overflow-y-auto p-6">
-          {/* Only mount each view's contents while open so they fetch fresh
-              status each time the drawer is opened. */}
-          {open && view === "setup" ? (
-            <>
-              <ApiKeyStep />
-              <NgrokStep />
-              <NavCard
-                title="Prompts"
-                hint="The hackathon dev journey — which slash command to run, in order."
-                onClick={() => setView("prompts")}
-              />
-              <NavCard
-                title="Build progress"
-                hint="Live task status for a /to-work run, polled from progress.json."
-                onClick={() => setView("progress")}
-              />
-            </>
-          ) : null}
+              <div className="flex-1 overflow-y-auto p-6">
+                {/* Each view slides + fades in. Sub-views enter from the right
+                    (drill in); setup enters from the left (back out). Keying on
+                    `view` lets AnimatePresence run the exit→enter handoff. */}
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={view}
+                    initial={{ opacity: 0, x: view === "setup" ? -20 : 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: view === "setup" ? 20 : -20 }}
+                    transition={{ duration: 0.18, ease: "easeOut" }}
+                    className="space-y-6"
+                  >
+                    {view === "setup" ? (
+                      <>
+                        <ApiKeyStep />
+                        <NgrokStep />
+                        <NavCard
+                          title="Prompts"
+                          hint="The hackathon dev journey — which slash command to run, in order."
+                          onClick={() => setView("prompts")}
+                        />
+                        <NavCard
+                          title="Build progress"
+                          hint="Live task status for a /to-work run, polled from progress.json."
+                          onClick={() => setView("progress")}
+                        />
+                      </>
+                    ) : null}
+                    {view === "prompts" ? <PromptsView /> : null}
+                    {view === "progress" ? <ProgressView /> : null}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
 
-          {open && view === "prompts" ? <PromptsView /> : null}
-          {open && view === "progress" ? <ProgressView /> : null}
-        </div>
-
-        <footer className="border-t border-strong p-4 text-center text-[11px] text-subtle">
-          Dev-only panel · hidden in production builds
-        </footer>
-      </aside>
+              <footer className="border-t border-strong p-4 text-center text-[11px] text-subtle">
+                Dev-only panel · hidden in production builds
+              </footer>
+            </motion.aside>
+          </>
+        ) : null}
+      </AnimatePresence>
     </>
   );
 }
