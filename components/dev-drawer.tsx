@@ -6,17 +6,49 @@ import { AnimatePresence, motion } from "framer-motion";
 // Developer onboarding drawer. Renders only in dev (layout.tsx gates it on
 // NODE_ENV), and its backend routes 404 in production too. It has three views,
 // switched by the `view` state and a back affordance in the header:
-//   • setup    — get the starter running (Blackbird API key, ngrok tunnel).
+//   • setup    — get the starter running (Blackbird credentials, ngrok tunnel).
 //   • prompts  — the curated hackathon dev journey (slash commands to run, in
 //                order; optional steps are badged). Pure UI, copies to clipboard.
 //   • progress — live task status for a `/to-work` run, polled from
 //                /api/dev/progress (which reads .flynet/progress.json).
 // Everything talks to /api/dev/* — nothing here touches real secrets directly.
 
-type EnvStatus = { isSet: boolean; masked: string | null };
+type FieldStatus = { isSet: boolean; masked: string | null };
 type NgrokStatus = { running: boolean; url: string | null };
 
 type View = "setup" | "prompts" | "progress";
+
+// The Blackbird credentials the setup step manages, in display order. `name`
+// matches the .env.local key the backend writes; `validates` notes how the
+// server checks it so the UI can explain what "Save & verify" actually does.
+type CredField =
+  | "BLACKBIRD_API_KEY"
+  | "BLACKBIRD_CLIENT_ID"
+  | "BLACKBIRD_CLIENT_SECRET";
+
+const CREDENTIALS: {
+  name: CredField;
+  label: string;
+  help: string;
+}[] = [
+  {
+    name: "BLACKBIRD_API_KEY",
+    label: "Discovery API key",
+    help: "Sent as X-API-Key for restaurant data. Server-side only.",
+  },
+  {
+    name: "BLACKBIRD_CLIENT_ID",
+    label: "OAuth client ID",
+    help: "Powers “Sign in with Blackbird”.",
+  },
+  {
+    name: "BLACKBIRD_CLIENT_SECRET",
+    label: "OAuth client secret",
+    help: "Backend-only — never reaches the browser.",
+  },
+];
+
+type CredStatus = Record<CredField, FieldStatus>;
 
 // The curated hackathon dev journey. Not every installed skill is here — these
 // are the steps that move a hackathon idea from "vague" to "shipped".
@@ -219,7 +251,7 @@ export function DevDrawer() {
                   >
                     {view === "setup" ? (
                       <>
-                        <ApiKeyStep />
+                        <CredentialsStep />
                         <NgrokStep />
                         <NavCard
                           title="Prompts"
@@ -250,21 +282,27 @@ export function DevDrawer() {
   );
 }
 
-// ── Step 1: Blackbird API key ────────────────────────────────────────────────
-function ApiKeyStep() {
-  const [status, setStatus] = useState<EnvStatus | null>(null);
+// ── Step 1: Blackbird credentials ────────────────────────────────────────────
+// API key + OAuth client id/secret. Saving runs them through the live API
+// (Discovery for the key, the OAuth token endpoint for the client pair) before
+// they're written to .env.local — so a typo is caught here, not at runtime.
+function CredentialsStep() {
+  const [status, setStatus] = useState<CredStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [value, setValue] = useState("");
+  const [values, setValues] = useState<Partial<Record<CredField, string>>>({});
+  const [editing, setEditing] = useState<Partial<Record<CredField, boolean>>>({});
+  const [fieldErrors, setFieldErrors] = useState<
+    Partial<Record<CredField, string>>
+  >({});
+  const [topError, setTopError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/dev/env");
-      const data = (await res.json()) as EnvStatus;
-      setStatus(data);
+      setStatus((await res.json()) as CredStatus);
     } catch {
       setStatus(null);
     } finally {
@@ -276,102 +314,150 @@ function ApiKeyStep() {
     load();
   }, [load]);
 
+  const isShown = (f: CredField) => !status?.[f]?.isSet || editing[f];
+  // Anything the developer has typed into a visible field.
+  const pending = CREDENTIALS.filter((c) => isShown(c.name)).reduce(
+    (acc, c) => {
+      const v = values[c.name]?.trim();
+      if (v) acc[c.name] = v;
+      return acc;
+    },
+    {} as Partial<Record<CredField, string>>,
+  );
+
   async function save() {
-    const apiKey = value.trim();
-    if (!apiKey) return;
+    if (Object.keys(pending).length === 0) return;
     setSaving(true);
-    setError(null);
+    setTopError(null);
+    setFieldErrors({});
+    setSaved(false);
     try {
       const res = await fetch("/api/dev/env", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey }),
+        body: JSON.stringify({ values: pending }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Could not save the key.");
-      setStatus(data as EnvStatus);
-      setValue("");
-      setEditing(false);
+      if (!res.ok) {
+        if (data.fieldErrors) setFieldErrors(data.fieldErrors);
+        throw new Error(data.error ?? "Could not save the credentials.");
+      }
+      setStatus(data as CredStatus);
+      // Clear only the fields we just saved.
+      setValues((v) => {
+        const next = { ...v };
+        for (const k of Object.keys(pending)) delete next[k as CredField];
+        return next;
+      });
+      setEditing((e) => {
+        const next = { ...e };
+        for (const k of Object.keys(pending)) delete next[k as CredField];
+        return next;
+      });
+      setSaved(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save the key.");
+      setTopError(e instanceof Error ? e.message : "Could not save.");
     } finally {
       setSaving(false);
     }
   }
 
-  const isSet = status?.isSet ?? false;
-  const showInput = !isSet || editing;
+  const allSet =
+    status != null && CREDENTIALS.every((c) => status[c.name].isSet);
 
   return (
     <Section
       index={1}
-      title="Blackbird API key"
-      done={isSet}
-      hint="The Discovery API key (BLACKBIRD_API_KEY). Saved to .env.local — server-side only."
+      title="Blackbird credentials"
+      done={allSet}
+      hint="API key + OAuth client id/secret. Verified against the live API, then written to .env.local."
     >
       {loading ? (
         <Skeleton />
       ) : (
-        <div className="space-y-3">
-          {isSet ? (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-success">✓ Configured</span>
-              {/* Already present → show it struck out, per the brief. */}
-              <code className="font-mono text-muted line-through">
-                {status?.masked}
-              </code>
-              {!editing ? (
-                <button
-                  type="button"
-                  onClick={() => setEditing(true)}
-                  className="ml-auto text-xs text-primary-bright underline-offset-2 hover:underline"
-                >
-                  Replace
-                </button>
-              ) : null}
-            </div>
-          ) : null}
+        <div className="space-y-4">
+          {CREDENTIALS.map((cred) => {
+            const set = status?.[cred.name]?.isSet ?? false;
+            const shown = isShown(cred.name);
+            const err = fieldErrors[cred.name];
+            return (
+              <div key={cred.name} className="space-y-1.5">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-sm font-medium text-foreground">
+                    {cred.label}
+                  </span>
+                  <code className="font-mono text-[11px] text-subtle">
+                    {cred.name}
+                  </code>
+                  {set && !editing[cred.name] ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditing((e) => ({ ...e, [cred.name]: true }))
+                      }
+                      className="ml-auto text-xs text-primary-bright underline-offset-2 hover:underline"
+                    >
+                      Replace
+                    </button>
+                  ) : null}
+                </div>
 
-          {showInput ? (
-            <div className="space-y-2">
-              <input
-                type="password"
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") save();
-                }}
-                placeholder="Paste your BLACKBIRD_API_KEY"
-                className="w-full rounded-xl border border-strong bg-surface-low px-3 py-2 text-sm text-foreground placeholder:text-subtle focus:border-primary focus:outline-none"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={save}
-                  disabled={saving || !value.trim()}
-                  className="inline-flex h-9 items-center justify-center rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:bg-primary-dim disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {saving ? "Saving…" : "Save to .env.local"}
-                </button>
-                {editing ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditing(false);
-                      setValue("");
-                      setError(null);
+                {set && !editing[cred.name] ? (
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="text-success">✓ Configured</span>
+                    {/* Already present → show it struck out. */}
+                    <code className="font-mono text-muted line-through">
+                      {status?.[cred.name]?.masked}
+                    </code>
+                  </div>
+                ) : (
+                  <p className="text-[11px] leading-relaxed text-subtle">
+                    {cred.help}
+                  </p>
+                )}
+
+                {shown ? (
+                  <input
+                    type="password"
+                    value={values[cred.name] ?? ""}
+                    onChange={(e) =>
+                      setValues((v) => ({ ...v, [cred.name]: e.target.value }))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") save();
                     }}
-                    className="text-xs text-muted hover:text-foreground"
-                  >
-                    Cancel
-                  </button>
+                    placeholder={`Paste your ${cred.name}`}
+                    className={`w-full rounded-xl border bg-surface-low px-3 py-2 text-sm text-foreground placeholder:text-subtle focus:outline-none ${
+                      err
+                        ? "border-failure focus:border-failure"
+                        : "border-strong focus:border-primary"
+                    }`}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
                 ) : null}
+
+                {err ? <p className="text-xs text-failure">{err}</p> : null}
               </div>
-              {error ? <p className="text-xs text-failure">{error}</p> : null}
-            </div>
-          ) : null}
+            );
+          })}
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving || Object.keys(pending).length === 0}
+              className="inline-flex h-9 items-center justify-center rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:bg-primary-dim disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {saving ? "Verifying…" : "Save & verify"}
+            </button>
+            {saved && !saving ? (
+              <span className="text-xs text-success">Saved & verified ✓</span>
+            ) : null}
+            {topError && !saving ? (
+              <span className="text-xs text-failure">{topError}</span>
+            ) : null}
+          </div>
         </div>
       )}
     </Section>
