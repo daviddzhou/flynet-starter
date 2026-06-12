@@ -6,7 +6,6 @@ import { BirdMark, LoginButton, LogoutButton } from "../components";
 import { OpenDevSetupButton } from "../components/dev-drawer";
 import { PassportQuest } from "../components/passport-quest";
 import { ACCESS_COOKIE } from "../lib/auth";
-import { getRestaurantCheckInCount } from "../lib/check-ins";
 import { env } from "../lib/env";
 import { listRestaurantLocations } from "../lib/locations";
 import { buildPassportQuest, prioritizeRestaurantsForTaste } from "../lib/quest";
@@ -89,24 +88,17 @@ async function renderPassportQuest(
       (listed.restaurants as Restaurant[]).filter((restaurant) => restaurant.name),
     ).slice(0, 75);
 
-    const [locations, checkInCounts] = await Promise.all([
-      Promise.all(
-        restaurants.map((restaurant) =>
-          listRestaurantLocations(apiKey, restaurant.id).catch(() => []),
-        ),
+    const locations = await Promise.all(
+      restaurants.map((restaurant) =>
+        listRestaurantLocations(apiKey, restaurant.id).catch(() => []),
       ),
-      Promise.all(
-        restaurants.map((restaurant) =>
-          getRestaurantCheckInCount(apiKey, restaurant.id).catch(() => null),
-        ),
-      ),
-    ]);
+    );
 
     const quest = buildPassportQuest(
       restaurants.map((restaurant, index) => ({
         restaurant,
         locations: locations[index],
-        checkInCount: checkInCounts[index],
+        checkInCount: null,
       })),
     );
 
