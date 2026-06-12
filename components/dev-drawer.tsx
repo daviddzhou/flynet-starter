@@ -187,7 +187,7 @@ export function DevDrawer() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-40 inline-flex h-11 items-center gap-2 rounded-full border border-strong bg-surface px-4 text-sm font-semibold text-foreground shadow-lg transition duration-150 ease-standard hover:bg-surface-high"
+        className="fixed bottom-5 right-5 z-40 hidden h-11 items-center gap-2 rounded-full border border-strong bg-surface px-4 text-sm font-semibold text-foreground shadow-lg transition duration-150 ease-standard hover:bg-surface-high sm:inline-flex"
         aria-label="Open developer setup"
       >
         <span className="text-base leading-none">⚙</span>

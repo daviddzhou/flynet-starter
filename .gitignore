@@ -2,6 +2,7 @@ node_modules
 .next
 out
 build
+.cache
 
 # env — keep .env.example, never commit real secrets
 .env
@@ -16,3 +17,4 @@ next-env.d.ts
 # journey.json) — only the transient lockdirs and temp files are ignored
 .flynet/*.lock
 .flynet/*.tmp.*
+.vercel

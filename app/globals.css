@@ -61,3 +61,54 @@ body {
   background: rgb(var(--selection-bg));
   color: rgb(var(--selection-fg));
 }
+
+.leaflet-container {
+  background: rgb(var(--surface-bg-darker));
+  color: rgb(var(--on-surface));
+  font: inherit;
+}
+
+.leaflet-control-attribution,
+.leaflet-control-zoom a {
+  background: rgb(var(--surface-container-low) / 0.9) !important;
+  border-color: var(--border-strong) !important;
+  color: rgb(var(--on-surface-alt)) !important;
+}
+
+.leaflet-control-attribution a {
+  color: rgb(var(--core-primary-bright)) !important;
+}
+
+.quest-map-marker {
+  display: grid;
+  place-items: center;
+  border: 2px solid rgb(var(--on-surface));
+  border-radius: 999px;
+  background: rgb(var(--core-primary));
+  box-shadow: 0 10px 24px rgb(0 0 0 / 0.35);
+  color: rgb(var(--core-on-primary));
+  font-weight: 800;
+}
+
+.quest-map-marker--checked {
+  background: rgb(var(--success));
+  color: rgb(var(--surface-bg-darker));
+}
+
+.quest-map-marker--start {
+  border-color: rgb(var(--core-primary-bright));
+  background: rgb(var(--surface-bg-darker));
+  color: rgb(var(--core-primary-bright));
+}
+
+.quest-map-marker span {
+  display: grid;
+  height: 100%;
+  place-items: center;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: rgb(var(--surface-container-low));
+  color: rgb(var(--on-surface));
+}

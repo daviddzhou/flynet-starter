@@ -1,22 +1,15 @@
 import type { ReactNode } from "react";
 import { cookies } from "next/headers";
-import { FlynetDiscoveryClient, FlynetError } from "@flynetdev/core";
-import type { Restaurant } from "@flynetdev/react";
-import { LoginButton, LogoutButton, RestaurantCard } from "../components";
+import { FlynetError } from "@flynetdev/core";
+import { BirdMark, LoginButton, LogoutButton } from "../components";
 import { OpenDevSetupButton } from "../components/dev-drawer";
+import { PassportQuest } from "../components/passport-quest";
 import { ACCESS_COOKIE } from "../lib/auth";
-import { listRestaurantLocations } from "../lib/locations";
-import { getRestaurantCheckInCount } from "../lib/check-ins";
+import { getCachedQuestRestaurantInputs } from "../lib/discovery-cache";
 import { env } from "../lib/env";
+import { buildPassportQuest } from "../lib/quest";
 import { MemberPanel } from "./member-panel";
 
-// The whole starter in one screen:
-//   1. Read restaurants from Flynet Discovery (server-side, with your API key).
-//   2. The member section: an ACCESS_TOKEN env var wins if set; otherwise the
-//      OAuth session cookie (set by the sign-in flow); otherwise a sign-in button.
-//
-// Discovery runs HERE, on the server. The API key is read from the environment
-// and never reaches the browser — that is the one security rule that matters.
 export default async function Home({
   searchParams,
 }: {
@@ -29,95 +22,81 @@ export default async function Home({
   const signedInViaOAuth = !env.ACCESS_TOKEN && Boolean(cookieToken);
 
   return (
-    <main className="mx-auto max-w-2xl space-y-10 p-10">
-      <header>
-        <p className="text-xs uppercase tracking-[0.2em] text-primary">
-          Flynet Starter
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-          Build on Blackbird
-        </h1>
-        <p className="mt-2 text-muted">
-          Real restaurant data from the Flynet API, rendered with the SDK.
-        </p>
+    <main className="mx-auto max-w-7xl space-y-8 px-5 py-6 sm:px-8 lg:px-10">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-5">
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-2xl bg-background-darker text-foreground">
+            <BirdMark size={22} />
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-foreground">
+              Passport Quest
+            </p>
+            <p className="text-sm text-muted">
+              Consumer discovery powered by Flynet
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-full border border-white/10 bg-surface-low px-3 py-1.5 text-xs font-medium text-muted">
+            Configurable quest window
+          </span>
+          {accessToken ? (
+            signedInViaOAuth ? (
+              <LogoutButton href="/api/auth/logout" />
+            ) : (
+              <span className="rounded-full border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-medium text-success">
+                Access token active
+              </span>
+            )
+          ) : (
+            <LoginButton href="/api/auth/login" />
+          )}
+        </div>
       </header>
 
-      {await renderRestaurants(apiKey)}
+      {await renderPassportQuest(apiKey, Boolean(accessToken))}
 
       {authError ? <AuthErrorNotice error={authError} /> : null}
 
-      {accessToken ? (
-        <>
+      <section className="grid gap-5">
+        {accessToken ? (
           <MemberPanel accessToken={accessToken} />
-          {signedInViaOAuth ? <LogoutButton href="/api/auth/logout" /> : null}
-        </>
-      ) : (
-        <SignInNotice />
-      )}
-
-      {/* 👉 Your code goes here.
-          The branded building blocks live in ./components — RestaurantCard,
-          UserCard, Tag, BBPayButton, LoginButton. The SDK's own catalog and
-          hooks live in @flynetdev/react. */}
+        ) : (
+          <SignInNotice />
+        )}
+      </section>
     </main>
   );
 }
 
-async function renderRestaurants(apiKey: string | undefined): Promise<ReactNode> {
+async function renderPassportQuest(
+  apiKey: string | undefined,
+  signedIn: boolean,
+): Promise<ReactNode> {
   if (!apiKey) return <SetupNotice />;
   try {
-    // API_BASE_URL switches environments; unset means production.
-    const discovery = new FlynetDiscoveryClient({
-      apiKey,
-      serverURL: env.API_BASE_URL,
-    });
-    // The list includes unpublished records with blank names (production has
-    // many, and blank names sort first) — over-fetch and keep the first 8
-    // that are actually presentable.
-    const listed = await discovery.restaurants.listRestaurants({
-      pageSize: 50,
-    });
-    const restaurants = listed.restaurants
-      .filter((restaurant) => restaurant.name)
-      .slice(0, 8);
-    // Locations and check-in counts are separate Discovery resources — fetch
-    // both in parallel, one call per listed restaurant (raw fetch; see
-    // lib/locations.ts and lib/check-ins.ts). A failed lookup just drops that
-    // bit of the card (the location line, or the check-in stat).
-    const [locations, checkInCounts] = await Promise.all([
-      Promise.all(
-        restaurants.map((restaurant) =>
-          listRestaurantLocations(apiKey, restaurant.id).catch(() => []),
-        ),
-      ),
-      Promise.all(
-        restaurants.map((restaurant) =>
-          getRestaurantCheckInCount(apiKey, restaurant.id).catch(() => null),
-        ),
-      ),
-    ]);
-    return (
-      <Section title="Restaurants">
-        <div className="grid gap-4 sm:grid-cols-2">
-          {(restaurants as Restaurant[]).map((restaurant, i) => (
-            <RestaurantCard
-              key={restaurant.id}
-              restaurant={restaurant}
-              locations={locations[i]}
-              checkInCount={checkInCounts[i]}
-            />
-          ))}
-        </div>
-      </Section>
-    );
+    const questInputs = await getCachedQuestRestaurantInputs(apiKey);
+    const quest = buildPassportQuest(questInputs);
+
+    if (quest.stops.length < 5) {
+      return (
+        <Notice title="Quest needs more restaurant data" tone="error">
+          Discovery returned {quest.stops.length} presentable restaurants. Add a
+          valid <Code>FLYNET_API_KEY</Code> in Dev Setup and refresh.
+        </Notice>
+      );
+    }
+
+    return <PassportQuest quest={quest} signedIn={signedIn} />;
   } catch (error) {
     const message =
       error instanceof FlynetError
         ? `${error.kind}: ${error.message}`
         : "Unexpected error.";
     return (
-      <Notice tone="error" title="Couldn't load restaurants">
-        {message} Check that <Code>FLYNET_API_KEY</Code> in <Code>.env.local</Code> is a
+      <Notice tone="error" title="Could not load Passport Quest">
+        {message} Check that <Code>FLYNET_API_KEY</Code> in Dev Setup is a
         valid Flynet key.
       </Notice>
     );
@@ -125,26 +104,22 @@ async function renderRestaurants(apiKey: string | undefined): Promise<ReactNode>
 }
 
 function SetupNotice() {
-  // The Dev Setup drawer only exists in dev builds (see layout.tsx). In dev,
-  // make the big call to action "open the drawer"; in production there's no
-  // drawer, so fall back to pointing at the hosting env vars.
   const isDev = process.env.NODE_ENV !== "production";
   return (
-    <div className="rounded-3xl border border-primary/30 bg-primary/5 p-8 text-center">
-      <p className="text-xs uppercase tracking-[0.2em] text-primary">
-        Get started
+    <div className="rounded-[2rem] border border-primary/30 bg-primary/10 p-8 text-center">
+      <p className="text-xs uppercase tracking-[0.18em] text-primary-bright">
+        Setup needed
       </p>
-      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-        Add your Blackbird credentials
+      <h2 className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
+        Add your Flynet credentials
       </h2>
-      <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted">
-        {isDev
-          ? "This app needs your Discovery API key and OAuth credentials to load real restaurant and member data. The Dev Setup drawer walks you through each one and verifies it before saving."
-          : "Set FLYNET_API_KEY and your OAuth credentials in your hosting environment variables, then redeploy to see real Blackbird data."}
+      <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-muted">
+        Passport Quest needs the Discovery API key to generate a real route. The
+        Dev Setup drawer verifies credentials and keeps secret values out of the
+        UI.
       </p>
       {isDev ? (
         <OpenDevSetupButton className="mt-6 inline-flex h-11 items-center gap-2 rounded-full bg-primary px-6 text-sm font-semibold text-primary-foreground shadow-lg transition duration-150 hover:opacity-90 active:bg-primary-dim">
-          <span className="text-base leading-none">⚙</span>
           Open Dev Setup
         </OpenDevSetupButton>
       ) : null}
@@ -154,13 +129,11 @@ function SetupNotice() {
 
 function SignInNotice() {
   return (
-    <Notice title="Your Blackbird account">
+    <Notice title="OAuth personalization layer">
       <span className="block">
-        Sign in with Blackbird to see your wallet and passport. The OAuth flow
-        runs server-side with your <Code>FLYNET_CLIENT_ID</Code> /{" "}
-        <Code>FLYNET_CLIENT_SECRET</Code> and keeps the tokens in HttpOnly cookies.
-        Setting <Code>ACCESS_TOKEN</Code> in <Code>.env.local</Code> skips the
-        flow entirely.
+        The demo works with a local guest profile when you skip sign-in. Connect
+        Blackbird to show member context from <Code>/users/me</Code> and make the
+        personalization story stronger.
       </span>
       <span className="mt-4 block">
         <LoginButton href="/api/auth/login" />
@@ -173,30 +146,18 @@ function AuthErrorNotice({ error }: { error: string }) {
   if (error === "redirect_uri_unset") {
     return (
       <Notice tone="error" title="Set your redirect URI first">
-        <Code>REDIRECT_URI</Code> isn&apos;t set, so sign-in would fall back to a{" "}
-        <Code>localhost</Code> callback that Blackbird hasn&apos;t whitelisted.
-        Open <strong>⚙ Dev Setup</strong> and set <Code>REDIRECT_URI</Code> to
-        your tunnel (or deployed) URL + <Code>/callback</Code>, then try again.
+        <Code>REDIRECT_URI</Code> is not set, so sign-in cannot use the current
+        tunnel callback. Open <strong>Dev Setup</strong> and set it to your
+        public URL plus <Code>/callback</Code>, then try again.
       </Notice>
     );
   }
   return (
-    <Notice tone="error" title="Sign-in didn't complete">
-      The OAuth flow failed (<Code>{error}</Code>). Check <Code>FLYNET_CLIENT_ID</Code>,{" "}
-      <Code>FLYNET_CLIENT_SECRET</Code>, and <Code>REDIRECT_URI</Code> in{" "}
-      <Code>.env.local</Code>, then try again.
+    <Notice tone="error" title="Sign-in did not complete">
+      The OAuth flow failed (<Code>{error}</Code>). Check{" "}
+      <Code>FLYNET_CLIENT_ID</Code>, <Code>FLYNET_CLIENT_SECRET</Code>, and{" "}
+      <Code>REDIRECT_URI</Code> in Dev Setup, then try again.
     </Notice>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <h2 className="text-xs uppercase tracking-[0.16em] text-muted">
-        {title}
-      </h2>
-      {children}
-    </section>
   );
 }
 
@@ -211,10 +172,10 @@ function Notice({
 }) {
   return (
     <div
-      className={`rounded-2xl border p-5 text-sm leading-relaxed ${
+      className={`rounded-3xl border p-5 text-sm leading-relaxed ${
         tone === "error"
-          ? "border-failure/40 text-failure"
-          : "border-white/10 text-muted"
+          ? "border-failure/40 bg-failure/5 text-failure"
+          : "border-white/10 bg-surface-low text-muted"
       }`}
     >
       <p className="font-medium text-foreground">{title}</p>
