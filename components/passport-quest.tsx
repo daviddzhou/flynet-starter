@@ -885,6 +885,17 @@ function MemberTasteProfilePanel({
   onCreateTasteProfile: () => void;
 }) {
   const profileLabel = buildGuestProfileLabel(profile.preferences);
+  const [isEditing, setIsEditing] = useState(status !== "created");
+  const isCreated = status === "created";
+
+  useEffect(() => {
+    if (isCreated) setIsEditing(false);
+  }, [isCreated]);
+
+  function saveTasteProfile() {
+    onCreateTasteProfile();
+    setIsEditing(false);
+  }
 
   return (
     <div className="mt-3 rounded-xl border border-success/20 bg-success/5 p-3">
@@ -899,8 +910,8 @@ function MemberTasteProfilePanel({
               : "Add taste signals for this member."}
           </p>
         </div>
-        <Tag tone={status === "created" ? "success" : "neutral"}>
-          {status === "created" ? "Created" : "Not created"}
+        <Tag tone={isCreated ? "success" : "neutral"}>
+          {isCreated ? "Created" : "Not created"}
         </Tag>
       </div>
 
@@ -911,21 +922,43 @@ function MemberTasteProfilePanel({
           </span>
           <Tag tone="primary">Live route scoring</Tag>
         </div>
-        <PreferencePicker
-          preferences={profile.preferences}
-          onTogglePreference={onTogglePreference}
-        />
+
+        {isEditing ? (
+          <PreferencePicker
+            preferences={profile.preferences}
+            onTogglePreference={onTogglePreference}
+          />
+        ) : (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {profile.preferences.slice(0, 8).map((preference) => (
+              <Tag key={preference} tone="primary">
+                {preference}
+              </Tag>
+            ))}
+            {profile.preferences.length > 8 ? (
+              <Tag>{`+${profile.preferences.length - 8} more`}</Tag>
+            ) : null}
+          </div>
+        )}
       </div>
 
-      <button
-        type="button"
-        onClick={onCreateTasteProfile}
-        className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-full border border-success/40 bg-success/10 px-3 text-sm font-semibold text-success transition hover:bg-success/15"
-      >
-        {status === "created"
-          ? "Update taste profile"
-          : "Create taste profile"}
-      </button>
+      {isEditing ? (
+        <button
+          type="button"
+          onClick={saveTasteProfile}
+          className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-full border border-success/40 bg-success/10 px-3 text-sm font-semibold text-success transition hover:bg-success/15"
+        >
+          {isCreated ? "Update and collapse" : "Create taste profile"}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setIsEditing(true)}
+          className="mt-3 inline-flex h-8 w-full items-center justify-center rounded-full border border-white/10 px-3 text-xs font-semibold text-muted transition hover:border-white/20 hover:text-foreground"
+        >
+          Edit taste profile
+        </button>
+      )}
     </div>
   );
 }
