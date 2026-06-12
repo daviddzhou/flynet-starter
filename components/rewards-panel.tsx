@@ -51,7 +51,7 @@ export function RewardsPanel({
         <p className="text-sm font-medium">
           {completed
             ? "Demo state: every planned stop has a simulated check-in."
-            : "Press Check in on each stop to preview the Rewards API moment without moving FLY."}
+            : "Mark each stop checked in to preview the Rewards API moment without moving FLY."}
         </p>
         <p className="mt-2 text-sm leading-relaxed text-muted">
           A production version would issue this only after verified check-ins and

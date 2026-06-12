@@ -156,8 +156,8 @@ const CHALLENGE_TRACKS: ChallengeTrack[] = [
     id: "classic",
     label: "Classic Quest",
     persona: "Planner",
-    description: "Three to five restaurants, compact route, steady pace.",
-    stopOptions: [3, 4, 5],
+    description: "Flexible passport cadence, from one night to one week.",
+    stopOptions: [3, 4, 5, 6, 7],
     defaultStops: 5,
     reward: "Simulated 50 FLY unlock after the final check-in",
     icon: "compass",
@@ -176,8 +176,8 @@ const CHALLENGE_TRACKS: ChallengeTrack[] = [
     id: "crawl",
     label: "Bar Crawl",
     persona: "Group",
-    description: "Social stops, drinks-friendly picks, easy walking legs.",
-    stopOptions: [4, 5, 6],
+    description: "Social stops, drinks-friendly picks, easy walking route.",
+    stopOptions: [4, 5, 6, 7],
     defaultStops: 5,
     reward: "Simulated group passport stamp after the last stop",
     icon: "glass",
@@ -326,6 +326,7 @@ export function PassportQuest({
     checkedStopKeys.includes(stopKey(stop)),
   ).length;
   const completed = selectedStops.length > 0 && checkedCount === selectedStops.length;
+  const cadenceLabel = buildCadenceLabel(selectedStops.length, durationMinutes);
 
   useEffect(() => {
     setCheckedStopKeys([]);
@@ -543,8 +544,9 @@ export function PassportQuest({
               onPresetStart={selectStartPreset}
             />
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <Metric label="Window" value={formatMinutes(durationMinutes)} />
+              <Metric label="Cadence" value={cadenceLabel} />
               <Metric label="Distance" value={formatKm(metrics.totalKm)} />
               <Metric
                 label="Mapped"
@@ -577,10 +579,11 @@ export function PassportQuest({
               <button
                 type="button"
                 onClick={generateQuest}
+                title="Reroll route with the current settings"
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:opacity-90 active:bg-primary-dim"
               >
                 <RefreshIcon className="h-4 w-4" />
-                Generate quest
+                Reroll route
               </button>
               {directionsUrl ? (
                 <a
@@ -607,7 +610,7 @@ export function PassportQuest({
           metrics={metrics}
           checkedStopKeys={checkedStopKeys}
           track={activeTrack}
-          durationMinutes={durationMinutes}
+          cadenceLabel={cadenceLabel}
           isPickingStartPoint={isPickingStartPoint}
           onStartPointPick={handleMapStartPointPick}
         />
@@ -622,6 +625,7 @@ export function PassportQuest({
           preferences={activePreferences}
           track={activeTrack}
           durationMinutes={durationMinutes}
+          cadenceLabel={cadenceLabel}
         />
         <RewardsPanel
           completed={completed}
@@ -1088,7 +1092,7 @@ function CheckInProgress({
           disabled={completed}
           className="inline-flex h-8 items-center justify-center rounded-full border border-success/40 bg-success/10 px-3 text-xs font-semibold text-success transition hover:bg-success/15 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Complete route
+          Mark all checked in
         </button>
         {checkedCount > 0 ? (
           <button
@@ -1109,7 +1113,7 @@ function LiveQuestMap({
   metrics,
   checkedStopKeys,
   track,
-  durationMinutes,
+  cadenceLabel,
   isPickingStartPoint,
   onStartPointPick,
 }: {
@@ -1117,7 +1121,7 @@ function LiveQuestMap({
   metrics: RouteMetrics;
   checkedStopKeys: string[];
   track: ChallengeTrack;
-  durationMinutes: number;
+  cadenceLabel: string;
   isPickingStartPoint: boolean;
   onStartPointPick: (coordinate: Coordinate) => void;
 }) {
@@ -1262,7 +1266,7 @@ function LiveQuestMap({
             </p>
             <p className="mt-1 text-sm text-muted">
               {formatKm(metrics.totalKm)} route,{" "}
-              {formatMinutes(durationMinutes)} target
+              {cadenceLabel} cadence
             </p>
           </div>
         </div>
@@ -1307,6 +1311,7 @@ function Itinerary({
   preferences,
   track,
   durationMinutes,
+  cadenceLabel,
 }: {
   stops: QuestStop[];
   metrics: RouteMetrics;
@@ -1315,6 +1320,7 @@ function Itinerary({
   preferences: string[];
   track: ChallengeTrack;
   durationMinutes: number;
+  cadenceLabel: string;
 }) {
   return (
     <section className="rounded-2xl border border-white/10 bg-surface-low">
@@ -1324,7 +1330,7 @@ function Itinerary({
             {stops.length} restaurants in route order
           </p>
           <p className="mt-1 text-sm text-muted">
-            {formatMinutes(durationMinutes)} target
+            {formatMinutes(durationMinutes)} window, {cadenceLabel}
           </p>
         </div>
         <p className="text-sm text-muted">
@@ -1417,7 +1423,7 @@ function ItineraryRow({
           }`}
         >
           <CheckIcon className="h-3.5 w-3.5" />
-          {checked ? "Checked in" : "Check in"}
+          {checked ? "Checked in" : "Mark check-in"}
         </button>
         {directionsUrl ? (
           <a
@@ -1944,6 +1950,22 @@ function formatWindowHoursInput(minutes: number): string {
 
 function formatCoordinate(coordinate: Coordinate): string {
   return `${coordinate.latitude.toFixed(4)}, ${coordinate.longitude.toFixed(4)}`;
+}
+
+function buildCadenceLabel(stopCount: number, minutes: number): string {
+  if (stopCount <= 0 || !Number.isFinite(minutes) || minutes <= 0) {
+    return "Open cadence";
+  }
+  if (minutes >= 7 * 24 * 60) {
+    return stopCount >= 7 ? "1 stop/day" : `${stopCount} stops/week`;
+  }
+  if (minutes >= 24 * 60) {
+    const days = minutes / (24 * 60);
+    if (days >= stopCount) return "1 stop/day";
+    return `${stopCount} stops/${formatMinutes(minutes)}`;
+  }
+  const minutesPerStop = Math.max(15, Math.round(minutes / stopCount));
+  return `Every ${formatMinutes(minutesPerStop)}`;
 }
 
 function formatMinutes(minutes: number): string {
