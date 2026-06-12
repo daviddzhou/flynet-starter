@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { FlynetDiscoveryClient } from "@flynetdev/core";
 import type { Restaurant } from "@flynetdev/react";
+import { unstable_cache } from "next/cache";
 
 import { env } from "./env";
 import { listRestaurantLocations, type RestaurantLocation } from "./locations";
@@ -12,9 +13,11 @@ import {
 
 const CACHE_SCHEMA_VERSION = 1;
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const CACHE_TTL_SECONDS = CACHE_TTL_MS / 1000;
 const DISCOVERY_PAGE_SIZE = 100;
 const QUEST_RESTAURANT_LIMIT = 75;
 const CACHE_PATH = path.join(process.cwd(), ".cache", "flynet-discovery.json");
+const RUNNING_ON_VERCEL = Boolean(process.env.VERCEL);
 
 type DiscoveryCacheFile = {
   schemaVersion: number;
@@ -39,7 +42,9 @@ export async function getCachedQuestRestaurantInputs(
   }
 
   try {
-    const fresh = await refreshCache(apiKey);
+    const fresh = RUNNING_ON_VERCEL
+      ? await getVercelCachedDiscovery(apiKey, env.API_BASE_URL ?? null)
+      : await refreshCache(apiKey);
     return cacheToQuestInputs(fresh);
   } catch (error) {
     if (cached && cached.restaurants.length > 0) {
@@ -55,17 +60,30 @@ export function getDiscoveryCachePath(): string {
 
 async function refreshCache(apiKey: string): Promise<DiscoveryCacheFile> {
   if (!inFlightRefresh) {
-    inFlightRefresh = fetchDiscoveryCache(apiKey).finally(() => {
+    inFlightRefresh = fetchDiscoveryCache(apiKey).then(async (cache) => {
+      await writeCacheFile(cache);
+      return cache;
+    }).finally(() => {
       inFlightRefresh = null;
     });
   }
   return inFlightRefresh;
 }
 
-async function fetchDiscoveryCache(apiKey: string): Promise<DiscoveryCacheFile> {
+const getVercelCachedDiscovery = unstable_cache(
+  async (apiKey: string, serverURL: string | null) =>
+    fetchDiscoveryCache(apiKey, serverURL),
+  ["flynet-discovery-cache-v1"],
+  { revalidate: CACHE_TTL_SECONDS },
+);
+
+async function fetchDiscoveryCache(
+  apiKey: string,
+  serverURL: string | null = env.API_BASE_URL ?? null,
+): Promise<DiscoveryCacheFile> {
   const discovery = new FlynetDiscoveryClient({
     apiKey,
-    serverURL: env.API_BASE_URL,
+    serverURL: serverURL ?? undefined,
   });
   const listed = await discovery.restaurants.listRestaurants({
     pageSize: DISCOVERY_PAGE_SIZE,
@@ -88,14 +106,12 @@ async function fetchDiscoveryCache(apiKey: string): Promise<DiscoveryCacheFile> 
   const cache: DiscoveryCacheFile = {
     schemaVersion: CACHE_SCHEMA_VERSION,
     cachedAt: new Date().toISOString(),
-    serverURL: env.API_BASE_URL ?? null,
+    serverURL,
     pageSize: DISCOVERY_PAGE_SIZE,
     restaurantLimit: QUEST_RESTAURANT_LIMIT,
     restaurants,
     locationsByRestaurantId,
   };
-
-  await writeCacheFile(cache);
   return cache;
 }
 

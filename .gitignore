@@ -17,3 +17,4 @@ next-env.d.ts
 # journey.json) — only the transient lockdirs and temp files are ignored
 .flynet/*.lock
 .flynet/*.tmp.*
+.vercel
