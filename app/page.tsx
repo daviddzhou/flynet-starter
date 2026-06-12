@@ -5,6 +5,7 @@ import type { Restaurant } from "@flynetdev/react";
 import { LoginButton, LogoutButton, RestaurantCard } from "../components";
 import { ACCESS_COOKIE } from "../lib/auth";
 import { listRestaurantLocations } from "../lib/locations";
+import { env } from "../lib/env";
 import { MemberPanel } from "./member-panel";
 
 // The whole starter in one screen:
@@ -19,11 +20,11 @@ export default async function Home({
 }: {
   searchParams: Promise<{ auth_error?: string }>;
 }) {
-  const apiKey = process.env.FLYNET_API_KEY;
+  const apiKey = env.FLYNET_API_KEY;
   const { auth_error: authError } = await searchParams;
   const cookieToken = (await cookies()).get(ACCESS_COOKIE)?.value;
-  const accessToken = process.env.ACCESS_TOKEN || cookieToken;
-  const signedInViaOAuth = !process.env.ACCESS_TOKEN && Boolean(cookieToken);
+  const accessToken = env.ACCESS_TOKEN || cookieToken;
+  const signedInViaOAuth = !env.ACCESS_TOKEN && Boolean(cookieToken);
 
   return (
     <main className="mx-auto max-w-2xl space-y-10 p-10">
@@ -66,7 +67,7 @@ async function renderRestaurants(apiKey: string | undefined): Promise<ReactNode>
     // API_BASE_URL switches environments; unset means production.
     const discovery = new FlynetDiscoveryClient({
       apiKey,
-      serverURL: process.env.API_BASE_URL || "https://api.blackbird.xyz/flynet/v1",
+      serverURL: env.API_BASE_URL,
     });
     // The list includes unpublished records with blank names (production has
     // many, and blank names sort first) — over-fetch and keep the first 8

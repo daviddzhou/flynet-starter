@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { DevDrawer } from "../components/dev-drawer";
+import { env } from "../lib/env";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -19,7 +20,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className={inter.className}>
         {children}
         {/* Developer onboarding drawer — dev builds only, never shipped to prod. */}
-        {process.env.NODE_ENV !== "production" ? <DevDrawer /> : null}
+        {env.NODE_ENV !== "production" ? <DevDrawer /> : null}
       </body>
     </html>
   );

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { blockInProduction } from "../../../../lib/dev-only";
+import { env } from "../../../../lib/env";
 
 // Backend for the dev onboarding drawer's first step: report which Blackbird
 // credentials are configured, and let the developer write them into .env.local
@@ -28,11 +29,12 @@ const SECRET_FIELDS = new Set<Field>([
   "FLYNET_CLIENT_SECRET",
 ]);
 
-// Same production defaults the SDK / lib/locations.ts use (unset env = production).
-const DISCOVERY_URL =
-  process.env.API_BASE_URL || "https://api.blackbird.xyz/flynet/v1";
-const AUTH_URL =
-  process.env.AUTH_BASE_URL || "https://api.blackbird.xyz/oauth";
+// Environment routing comes from the validated env (unset = production), the
+// same source the SDK clients use. Credential *status*, though, is read straight
+// from process.env below: this route mutates process.env when it writes new
+// values, and `env` is parsed once at import so it wouldn't reflect those.
+const DISCOVERY_URL = env.API_BASE_URL;
+const AUTH_URL = env.AUTH_BASE_URL;
 
 type FieldStatus = { isSet: boolean; masked: string | null };
 

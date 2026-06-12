@@ -5,6 +5,7 @@ import {
   getAuthenticatedUserId,
 } from "@flynetdev/core";
 import { resolveAccessToken } from "../../../lib/session";
+import { env } from "../../../lib/env";
 
 // Blackbird Pay, server-side: create a Payment Intent and immediately confirm
 // it for the signed-in member. Runs on the server because the intent lifecycle
@@ -24,7 +25,7 @@ export async function POST(req: Request) {
   // (e.g. from your onboarding email). Leave it unset to let the app pay itself:
   // the member JWT already identifies the merchant, so no id is needed — the
   // token alone is enough and the payment just works.
-  const merchantId = process.env.FLYNET_MERCHANT_ID;
+  const merchantId = env.FLYNET_MERCHANT_ID;
 
   let body: { amountFlyWei?: string; description?: string };
   try {
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
   // API_BASE_URL switches environments; unset means production.
   const member = new FlynetMemberClient({
     accessToken,
-    serverURL: process.env.API_BASE_URL || "https://api.blackbird.xyz/flynet/v1",
+    serverURL: env.API_BASE_URL,
   });
   const userId = getAuthenticatedUserId(accessToken);
 

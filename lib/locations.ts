@@ -5,8 +5,9 @@
 // the UI needs. Server-only — it carries the Discovery API key.
 
 // API_BASE_URL switches environments (unset = production), matching the SDK clients.
-const DISCOVERY_URL =
-  process.env.API_BASE_URL || "https://api.blackbird.xyz/flynet/v1";
+import { env } from "./env";
+
+const DISCOVERY_URL = env.API_BASE_URL;
 
 export interface RestaurantLocation {
   id: string;

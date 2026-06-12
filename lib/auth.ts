@@ -1,4 +1,5 @@
 import { FlynetOAuth } from "@flynetdev/core";
+import { env } from "./env";
 
 // Server-only OAuth wiring (Token-Mediating Backend, per the Flynet docs):
 // the backend holds FLYNET_CLIENT_SECRET and the refresh token; the browser only ever
@@ -27,7 +28,7 @@ export const SCOPES = [
 export const cookieOptions = {
   httpOnly: true,
   sameSite: "lax",
-  secure: process.env.NODE_ENV === "production",
+  secure: env.NODE_ENV === "production",
   path: "/",
 } as const;
 
@@ -38,7 +39,7 @@ export const cookieOptions = {
  * on that host by definition) and fall back to the request URL without it.
  */
 export function appUrl(path: string, requestUrl: string | URL): URL {
-  return new URL(path, process.env.REDIRECT_URI || requestUrl);
+  return new URL(path, env.REDIRECT_URI || requestUrl);
 }
 
 type ForwardableRequest = { headers: Headers; nextUrl: URL };
@@ -68,25 +69,26 @@ export function publicOrigin(req: ForwardableRequest): URL {
  * browser is on localhost even when a tunnel is up, so host alone can't tell us.
  */
 export function redirectUriMissing(): boolean {
-  return !process.env.REDIRECT_URI;
+  return !env.REDIRECT_URI;
 }
 
 /** Build the SDK's OAuth helper from env, or null when the app isn't configured. */
 export function makeOAuth(): FlynetOAuth | null {
-  const clientId = process.env.FLYNET_CLIENT_ID;
-  const clientSecret = process.env.FLYNET_CLIENT_SECRET;
+  const clientId = env.FLYNET_CLIENT_ID;
+  const clientSecret = env.FLYNET_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
   return new FlynetOAuth({
     clientId,
     clientSecret,
-    redirectUri: process.env.REDIRECT_URI ?? "http://localhost:3000/callback",
+    redirectUri: env.REDIRECT_URI ?? "http://localhost:3000/callback",
     scopes: SCOPES,
-    // Defaults to production. Set AUTH_BASE_URL to override (e.g. the SDK's
-    // staging default) — there's no named "production" environment in the SDK
-    // yet, so production is spelled out explicitly here.
-    authBaseUrl: process.env.AUTH_BASE_URL || "https://api.blackbird.xyz/oauth",
+    // Defaults to production (env defaults AUTH_BASE_URL to it). Set
+    // AUTH_BASE_URL to override (e.g. the SDK's staging default) — there's no
+    // named "production" environment in the SDK yet, so production is spelled
+    // out explicitly here.
+    authBaseUrl: env.AUTH_BASE_URL,
     // The audience the token is minted for — the production API gateway. The
     // staging form hyphenates this (api-staging) as the auth tenant in claims.
-    audience: process.env.AUTH_AUDIENCE || "https://api.blackbird.xyz/flynet",
+    audience: env.AUTH_AUDIENCE,
   });
 }
