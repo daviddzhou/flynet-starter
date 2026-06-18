@@ -1,7 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  QueryClient,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { FlynetMemberClient } from "@flynetdev/core";
 import {
   FlynetProvider,
@@ -11,6 +15,20 @@ import {
   walletsQueryKey,
 } from "@flynetdev/react";
 import { BBPayButton, UserCard } from "../components";
+
+// One QueryClient for the whole member section (profile + the SDK's own wallet
+// queries). The defaults keep API traffic lean: data stays "fresh" for a minute
+// so remounts reuse the cache, and we don't refetch every time the tab regains
+// focus. After a payment we still invalidate the wallet key explicitly to pull
+// the new balance — refetch on the event that changed it, not on a timer.
+const memberQueryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 // Member components run in the browser and read from the FlynetProvider. The
 // member client holds the OAuth token and fetches client-side, so this is a
@@ -32,7 +50,7 @@ export function MemberPanel({ accessToken }: { accessToken: string }) {
   );
 
   return (
-    <FlynetProvider member={member}>
+    <FlynetProvider member={member} queryClient={memberQueryClient}>
       <section className="space-y-3">
         <h2 className="text-xs uppercase tracking-[0.16em] text-muted">
           Your Blackbird account

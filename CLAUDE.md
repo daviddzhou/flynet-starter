@@ -55,6 +55,35 @@ The full API reference, in an LLM-friendly form, is at
 endpoint, request shape, and scopes, then make the call with `fetch` against the
 configured base URL (`API_BASE_URL` / `AUTH_BASE_URL`, defaulting to production).
 
+## Keep API usage lean
+
+Blackbird's APIs are rate-limited and metered, and this page fans out — one list
+call plus a locations and a check-in lookup per restaurant on every render. Don't
+refetch data that barely changed; reach for the cheapest layer that still looks
+live.
+
+- **Server `fetch`: cache with `next: { revalidate }`.** The raw Discovery
+  fetches in `lib/locations.ts` and `lib/check-ins.ts` set a `revalidate` window
+  so Next.js serves them from its Data Cache across requests and users instead of
+  hitting the API on every page load. Use a long window for data that rarely
+  moves (locations: 1h), a short one for data that drifts (check-in counts: 5m).
+  New server-side `fetch` calls should pass a `revalidate` too.
+- **SDK calls that ignore fetch options: wrap in `unstable_cache`.** The
+  Discovery SDK client doesn't forward Next's `fetch` cache options, so the
+  restaurant list in `page.tsx` is wrapped in `unstable_cache(..., { revalidate })`
+  to land in the Data Cache anyway. Do the same for any SDK call you can't pass
+  `next: { revalidate }` to directly.
+- **Client queries: set `staleTime`, skip focus refetches.** `member-panel.tsx`
+  hands `FlynetProvider` a `QueryClient` with `staleTime` and
+  `refetchOnWindowFocus: false`, so React Query reuses cached profile/wallet data
+  instead of refetching on every mount or tab focus. Tune via the provider's
+  `queryClient`, not per-call.
+- **Refetch on the event, not a timer.** After a mutation (e.g. the payment),
+  invalidate just the affected query key — as `PaySection` does with
+  `walletsQueryKey`. Don't add `setInterval`/polling to keep data fresh.
+- **Fetch once per resource per render.** Keep the `Promise.all` fan-out in
+  `page.tsx`; don't re-request the same data inside child components.
+
 ## Redirect URI whitelisting
 
 The redirect URI (ngrok URL or deployed domain + `/callback`) must be

@@ -31,7 +31,13 @@ export async function listRestaurantLocations(
 ): Promise<RestaurantLocation[]> {
   const res = await fetch(
     `${DISCOVERY_URL}/restaurants/${restaurantId}/locations`,
-    { headers: { "X-API-Key": apiKey } },
+    {
+      headers: { "X-API-Key": apiKey },
+      // Locations barely change, and this runs once per restaurant on every
+      // render. Cache in Next's Data Cache so we don't re-hit Discovery on
+      // each page load — served from cache for an hour, then revalidated.
+      next: { revalidate: 3600 },
+    },
   );
   if (!res.ok) return [];
   const data = (await res.json()) as { locations?: RawLocation[] };

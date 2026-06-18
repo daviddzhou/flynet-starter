@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cookies } from "next/headers";
+import { unstable_cache } from "next/cache";
 import { FlynetDiscoveryClient, FlynetError } from "@flynetdev/core";
 import type { Restaurant } from "@flynetdev/react";
 import { LoginButton, LogoutButton, RestaurantCard } from "../components";
@@ -63,23 +64,32 @@ export default async function Home({
   );
 }
 
-async function renderRestaurants(apiKey: string | undefined): Promise<ReactNode> {
-  if (!apiKey) return <SetupNotice />;
-  try {
+// The SDK client doesn't forward Next's `fetch` cache options, so wrap the whole
+// call in unstable_cache: the trimmed list lands in Next's Data Cache and is
+// reused across requests and users, revalidating hourly instead of re-hitting
+// Discovery on every render. Restaurant data barely moves, so an hour is safe.
+const loadRestaurants = unstable_cache(
+  async (apiKey: string, serverURL: string | undefined) => {
     // API_BASE_URL switches environments; unset means production.
-    const discovery = new FlynetDiscoveryClient({
-      apiKey,
-      serverURL: env.API_BASE_URL,
-    });
+    const discovery = new FlynetDiscoveryClient({ apiKey, serverURL });
     // The list includes unpublished records with blank names (production has
     // many, and blank names sort first) — over-fetch and keep the first 8
     // that are actually presentable.
     const listed = await discovery.restaurants.listRestaurants({
       pageSize: 50,
     });
-    const restaurants = listed.restaurants
+    return listed.restaurants
       .filter((restaurant) => restaurant.name)
       .slice(0, 8);
+  },
+  ["discovery-restaurants"],
+  { revalidate: 3600 },
+);
+
+async function renderRestaurants(apiKey: string | undefined): Promise<ReactNode> {
+  if (!apiKey) return <SetupNotice />;
+  try {
+    const restaurants = await loadRestaurants(apiKey, env.API_BASE_URL);
     // Locations and check-in counts are separate Discovery resources — fetch
     // both in parallel, one call per listed restaurant (raw fetch; see
     // lib/locations.ts and lib/check-ins.ts). A failed lookup just drops that
