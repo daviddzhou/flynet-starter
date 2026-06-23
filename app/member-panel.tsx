@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   QueryClient,
   useQuery,
@@ -65,22 +65,39 @@ export function MemberPanel({ accessToken }: { accessToken: string }) {
 }
 
 // Demo charge: 1 FLY (wei is a stringified integer, 18 decimals). The USD
-// label is display-only — the v1 API is FLY-denominated, with ~1 FLY ≈ $1.
+// label is display-only — the v1 API is FLY-denominated, with ~1 FLY ≈ $0.10.
 const DEMO_AMOUNT_FLY_WEI = "1000000000000000000";
-const DEMO_AMOUNT_USD_CENTS = 100;
+const DEMO_AMOUNT_USD_CENTS = 10;
 
-// Blackbird Pay, wired for real: POST /api/pay creates and confirms a Payment
-// Intent server-side with whichever token the app is running on (ACCESS_TOKEN
-// env var or the OAuth session cookie). Lives inside the provider so a
-// successful payment can invalidate the wallet query and refresh the balance.
+// Blackbird Pay as proper steps: click → confirm → receipt.
+//
+// POST /api/pay creates AND confirms a Payment Intent server-side, on whichever
+// member token the server resolves fresh at call time — env pin, OAuth cookie
+// (auto-renewed by middleware), or the local session file kept alive by the
+// refresh watcher. Because the token is resolved server-side per request, the
+// charge always runs on a live token even if this page has been open for a
+// while. We gate the actual call behind an explicit confirm step, then show a
+// receipt. Lives inside the provider so a successful payment can refresh the
+// wallet badge.
+
+type Receipt = {
+  id: string;
+  status?: string;
+  paidAt?: string;
+};
+
+type PayState =
+  | { phase: "idle" }
+  | { phase: "confirm" }
+  | { phase: "paying" }
+  | { phase: "paid"; receipt: Receipt }
+  | { phase: "error"; message: string };
+
 function PaySection() {
   const queryClient = useQueryClient();
-  const [pay, setPay] = useState<{
-    phase: "idle" | "paying" | "paid" | "error";
-    message?: string;
-  }>({ phase: "idle" });
+  const [pay, setPay] = useState<PayState>({ phase: "idle" });
 
-  async function handlePay() {
+  async function confirmAndPay() {
     setPay({ phase: "paying" });
     try {
       const res = await fetch("/api/pay", {
@@ -95,41 +112,157 @@ function PaySection() {
       if (!res.ok) {
         throw new Error(data.error ?? `Payment failed (HTTP ${res.status}).`);
       }
-      setPay({ phase: "paid", message: `Paid — intent ${data.id}` });
+      setPay({
+        phase: "paid",
+        receipt: { id: data.id, status: data.status, paidAt: data.paidAt },
+      });
       // The balance changed upstream; refetch the wallet badge.
       queryClient.invalidateQueries({ queryKey: walletsQueryKey });
     } catch (error) {
       setPay({
         phase: "error",
-        message:
-          error instanceof Error ? error.message : "Payment failed.",
+        message: error instanceof Error ? error.message : "Payment failed.",
       });
     }
   }
 
+  // Step 3 — receipt.
+  if (pay.phase === "paid") {
+    return (
+      <PaymentReceipt
+        receipt={pay.receipt}
+        onDone={() => setPay({ phase: "idle" })}
+      />
+    );
+  }
+
+  // Step 2 — confirm before sending.
+  if (pay.phase === "confirm") {
+    return (
+      <div className="space-y-3 rounded-2xl border border-white/10 p-4">
+        <div>
+          <p className="text-sm font-medium text-foreground">Confirm payment</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            Send <span className="font-semibold text-foreground">1 FLY</span>{" "}
+            (≈ $0.10) to the starter merchant? It&apos;s created and confirmed
+            server-side, and it&apos;s irreversible.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={confirmAndPay}
+            className="inline-flex h-10 items-center rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition duration-150 hover:opacity-90 active:bg-primary-dim"
+          >
+            Confirm &amp; pay
+          </button>
+          <button
+            type="button"
+            onClick={() => setPay({ phase: "idle" })}
+            className="inline-flex h-10 items-center rounded-full border border-white/10 px-5 text-sm font-medium text-muted transition duration-150 hover:text-foreground"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Step 1 — the entry button (idle), plus the in-flight / error states.
   return (
     <div className="space-y-2 pt-2">
       <BBPayButton
         amountUsdCents={DEMO_AMOUNT_USD_CENTS}
-        onPay={handlePay}
+        onPay={() => setPay({ phase: "confirm" })}
         disabled={pay.phase === "paying"}
       />
       {pay.phase === "paying" ? (
-        <p className="text-xs text-subtle">Paying…</p>
-      ) : null}
-      {pay.phase === "paid" ? (
-        <p className="text-xs text-success">{pay.message}</p>
-      ) : null}
-      {pay.phase === "error" ? (
+        <p className="text-xs text-subtle">Processing payment…</p>
+      ) : pay.phase === "error" ? (
         <p className="text-xs text-failure">{pay.message}</p>
-      ) : null}
-      {pay.phase === "idle" ? (
+      ) : (
         <p className="text-xs text-subtle">
-          Demo payment — 1 FLY to the starter merchant, created and confirmed
-          server-side.
+          Demo payment — 1 FLY to the starter merchant. You&apos;ll confirm
+          before it sends.
         </p>
-      ) : null}
+      )}
     </div>
+  );
+}
+
+// The receipt shown after a confirmed payment — amount, status, time, and the
+// Payment Intent id, with a reset back to the pay button.
+function PaymentReceipt({
+  receipt,
+  onDone,
+}: {
+  receipt: Receipt;
+  onDone: () => void;
+}) {
+  const paidAt = receipt.paidAt ? new Date(receipt.paidAt) : null;
+  return (
+    <div className="space-y-3 rounded-2xl border border-success/30 bg-success/5 p-4">
+      <div className="flex items-center gap-2">
+        <CheckCircleIcon className="h-4 w-4 shrink-0 text-success" />
+        <p className="text-sm font-medium text-foreground">Payment complete</p>
+      </div>
+      <dl className="space-y-1.5 text-xs">
+        <ReceiptRow label="Amount">
+          1 FLY <span className="text-muted">(≈ $0.10)</span>
+        </ReceiptRow>
+        {receipt.status ? (
+          <ReceiptRow label="Status">{receipt.status}</ReceiptRow>
+        ) : null}
+        {paidAt ? (
+          <ReceiptRow label="Paid">{paidAt.toLocaleString()}</ReceiptRow>
+        ) : null}
+        <ReceiptRow label="Intent">
+          <code className="rounded bg-white/10 px-1 py-0.5 text-foreground">
+            {receipt.id}
+          </code>
+        </ReceiptRow>
+      </dl>
+      <button
+        type="button"
+        onClick={onDone}
+        className="inline-flex h-10 items-center rounded-full border border-white/10 px-5 text-sm font-medium text-muted transition duration-150 hover:text-foreground"
+      >
+        New payment
+      </button>
+    </div>
+  );
+}
+
+function ReceiptRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-muted">{label}</dt>
+      <dd className="text-right font-medium text-foreground">{children}</dd>
+    </div>
+  );
+}
+
+function CheckCircleIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+      <path d="m9 11 3 3L22 4" />
+    </svg>
   );
 }
 
@@ -169,9 +302,15 @@ function ClaimRewardSection() {
       const res = await fetch("/api/reward", { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
+        // Coerce to a string — never let an error object reach the JSX, or
+        // React throws "Objects are not valid as a React child".
+        const message =
+          typeof data.error === "string"
+            ? data.error
+            : `Claim failed (HTTP ${res.status}).`;
         setClaim({
           phase: "error",
-          message: data.error ?? `Claim failed (HTTP ${res.status}).`,
+          message,
           insufficient: Boolean(data.insufficient),
         });
         return;

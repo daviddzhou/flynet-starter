@@ -28,6 +28,24 @@ function apiHeaders(apiKey: string) {
   return { "X-API-Key": apiKey, "Content-Type": "application/json" };
 }
 
+// Pull a plain string out of a Blackbird error body. The envelope is
+// `{ error: { type, code, message, param } }` for auth/validation errors but
+// `{ message, error: "SomeException" }` for internal 500s — so `error` can be an
+// object OR a string. Never return the raw object: it would crash the UI as an
+// invalid React child.
+function apiErrorMessage(data: unknown, status: number): string {
+  const d = data as { error?: unknown; message?: unknown } | null;
+  const e = d?.error;
+  if (e && typeof e === "object") {
+    const eo = e as { message?: unknown; code?: unknown };
+    if (typeof eo.message === "string") return eo.message;
+    if (typeof eo.code === "string") return eo.code;
+  }
+  if (typeof d?.message === "string") return d.message;
+  if (typeof e === "string") return e;
+  return `Reward failed (HTTP ${status}).`;
+}
+
 // GET: the app-wallet status the claim UI needs — current balance, whether it
 // covers a 1 FLY reward, and the merchant id to hand out for a top-up.
 export async function GET() {
@@ -147,9 +165,7 @@ export async function POST() {
         { status: 502 },
       );
     }
-    const message =
-      (data && (data.message || data.error)) ||
-      `Reward failed (HTTP ${res.status}).`;
+    const message = apiErrorMessage(data, res.status);
     // An empty app wallet surfaces as 400; flag it so the UI can show the
     // top-up hint (send the merchant id to get funded).
     return NextResponse.json(

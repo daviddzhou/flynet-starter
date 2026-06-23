@@ -4,13 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 // Developer onboarding drawer. Renders only in dev (layout.tsx gates it on
-// NODE_ENV), and its backend routes 404 in production too. It has three views,
+// NODE_ENV), and its backend routes 404 in production too. It has two views,
 // switched by the `view` state and a back affordance in the header:
 //   • setup    — get the starter running (Blackbird credentials, ngrok tunnel).
-//   • prompts  — the curated hackathon dev journey (slash commands to run, in
-//                order; optional steps are badged). Pure UI, copies to clipboard.
-//   • progress — live task status for a `/to-work` run, polled from
-//                /api/dev/progress (which reads .flynet/progress.json).
 //   • deploy   — "I'm ready to deploy": how to ship to Vercel and which env
 //                vars to set there. Pure UI, copies to clipboard.
 // Everything talks to /api/dev/* — nothing here touches real secrets directly.
@@ -25,7 +21,7 @@ type TunnelStatus = {
   kind: "codespaces" | "ngrok";
 };
 
-type View = "setup" | "prompts" | "progress" | "deploy";
+type View = "setup" | "deploy";
 
 // The Blackbird credentials the setup step manages, in display order. `name`
 // matches the .env.local key the backend writes; `validates` notes how the
@@ -66,77 +62,13 @@ const CREDENTIALS: {
   {
     name: "REDIRECT_URI",
     label: "Redirect URI",
-    help: "Your ngrok (or deployed) https URL + /callback. Whitelist it at bb-apis.vercel.app/redirect (sign in with your Slack email).",
+    help: "Your ngrok (or deployed) https URL + /callback. Whitelist it at make.flynet.org (sign in with your Slack email).",
     secret: false,
     placeholder: "https://<subdomain>.ngrok.app/callback",
   },
 ];
 
 type CredStatus = Record<CredField, FieldStatus>;
-
-// The curated hackathon dev journey. Not every installed skill is here — these
-// are the steps that move a hackathon idea from "vague" to "shipped".
-//
-// `id` matches the key the skill writes into .flynet/journey.json, so the UI can
-// show each mandatory step's status (not started / in progress / done). Clicking
-// a card copies `prompt` — a short natural-language nudge that triggers Claude to
-// use that skill.
-type JourneyStep = {
-  id: string;
-  title: string;
-  subtitle: string;
-  command: string;
-  prompt: string;
-};
-
-// Mandatory, linear, and completion-tracked via .flynet/journey.json.
-const STEPS: JourneyStep[] = [
-  {
-    id: "grill-with-docs",
-    title: "Grill your idea",
-    subtitle: "Pressure-test and scope your idea",
-    command: "/grill-with-docs",
-    prompt:
-      "Use the grill-with-docs skill to pressure-test and scope down my hackathon idea so it's shippable in the time I have.",
-  },
-  {
-    id: "to-plan",
-    title: "Plan it out",
-    subtitle: "PRD plus sliced, local tasks",
-    command: "/to-plan",
-    prompt:
-      "Use the to-plan skill to turn my scoped idea into a PRD and slice it into thin, local end-to-end tasks.",
-  },
-  {
-    id: "to-work",
-    title: "Work it",
-    subtitle: "Agents build each slice, committing",
-    command: "/to-work",
-    prompt:
-      "Use the to-work skill to spawn a subagent per slice and build them, committing per task and tracking progress.",
-  },
-];
-
-// Optional helpers — no clear "done", so they live in their own section and
-// aren't completion-tracked. Reach for them whenever they help.
-const OTHERS: JourneyStep[] = [
-  {
-    id: "prototype",
-    title: "Prototype",
-    subtitle: "Spike the riskiest piece fast",
-    command: "/prototype",
-    prompt:
-      "Use the prototype skill to spike the riskiest part of this with throwaway code before I commit.",
-  },
-  {
-    id: "diagnose",
-    title: "Diagnose",
-    subtitle: "Disciplined loop for hard bugs",
-    command: "/diagnose",
-    prompt:
-      "Use the diagnose skill to debug this systematically — build a fast repro, hypothesize, instrument, fix.",
-  },
-];
 
 // Other components (e.g. the page's "get started" callout when env is missing)
 // open the drawer by dispatching this event, so they don't need a shared store.
@@ -183,8 +115,6 @@ export function DevDrawer() {
   // Per-view header copy.
   const HEADER: Record<View, { eyebrow: string; title: string }> = {
     setup: { eyebrow: "Developer Setup", title: "Get this starter running" },
-    prompts: { eyebrow: "Prompts", title: "Your hackathon dev journey" },
-    progress: { eyebrow: "Progress", title: "Live task status" },
     deploy: { eyebrow: "Deploy", title: "Ship it to Vercel" },
   };
 
@@ -289,8 +219,6 @@ export function DevDrawer() {
                     className="space-y-6"
                   >
                     {view === "setup" ? <SetupView setView={setView} /> : null}
-                    {view === "prompts" ? <PromptsView /> : null}
-                    {view === "progress" ? <ProgressView /> : null}
                     {view === "deploy" ? <DeployView /> : null}
                   </motion.div>
                 </AnimatePresence>
@@ -340,16 +268,6 @@ function SetupView({ setView }: { setView: (v: View) => void }) {
     <>
       <CredentialsStep reloadToken={credReloadToken} />
       <TunnelStep onRedirectUriSaved={() => setCredReloadToken((t) => t + 1)} />
-      <NavCard
-        title="Prompts"
-        hint="The hackathon dev journey — which slash command to run, in order."
-        onClick={() => setView("prompts")}
-      />
-      <NavCard
-        title="Build progress"
-        hint="Live task status for a /to-work run, polled from progress.json."
-        onClick={() => setView("progress")}
-      />
       <NavCard
         title="I'm ready to deploy"
         hint="Ship to Vercel — push, import, and set your env vars there."
@@ -595,10 +513,17 @@ function TunnelStep({
     load();
   }, [load]);
 
+  // What actually gets whitelisted and saved as REDIRECT_URI: the tunnel URL
+  // plus /callback. Display and copy THIS (not the bare host) so what you paste
+  // into the whitelist matches what "Use as Redirect URI" saves.
+  const callbackUrl = status?.url
+    ? `${status.url.replace(/\/+$/, "")}/callback`
+    : null;
+
   async function copy() {
-    if (!status?.url) return;
+    if (!callbackUrl) return;
     try {
-      await navigator.clipboard.writeText(status.url);
+      await navigator.clipboard.writeText(callbackUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -606,12 +531,12 @@ function TunnelStep({
     }
   }
 
-  // Save the tunnel URL (+ /callback) straight into REDIRECT_URI via the same
-  // endpoint the credentials step uses, then tell that step to refresh so it
-  // shows the redirect URI as configured. The server validates the shape.
+  // Save the callback URL straight into REDIRECT_URI via the same endpoint the
+  // credentials step uses, then tell that step to refresh so it shows the
+  // redirect URI as configured. The server validates the shape.
   async function useAsRedirect() {
-    if (!status?.url) return;
-    const redirectUri = `${status.url.replace(/\/+$/, "")}/callback`;
+    if (!callbackUrl) return;
+    const redirectUri = callbackUrl;
     setSettingRedirect(true);
     setRedirectMsg(null);
     try {
@@ -676,10 +601,10 @@ function TunnelStep({
           <button
             type="button"
             onClick={copy}
-            title="Copy URL"
+            title="Copy callback URL"
             className="flex w-full items-center gap-2 rounded-xl border border-strong bg-surface-low px-3 py-2 text-left font-mono text-xs text-foreground transition hover:bg-surface"
           >
-            <span className="truncate">{status?.url}</span>
+            <span className="truncate">{callbackUrl}</span>
             <span className="ml-auto shrink-0 text-[11px] text-muted">
               {copied ? "Copied!" : "Copy"}
             </span>
@@ -724,16 +649,15 @@ function TunnelStep({
               whitelisted on the Blackbird side — point the dev at the self-serve
               portal so they can add it themselves. */}
           <p className="rounded-lg border border-brand-yellow/30 bg-brand-yellow/10 px-3 py-2 text-xs leading-relaxed text-brand-yellow">
-            Whitelist{" "}
-            <code className="font-mono">{status?.url}/callback</code> for the
+            Whitelist <code className="font-mono">{callbackUrl}</code> for the
             Blackbird API: sign in with your Slack email at{" "}
             <a
-              href="https://bb-apis.vercel.app/redirect"
+              href="https://make.flynet.org/"
               target="_blank"
               rel="noreferrer"
               className="underline underline-offset-2"
             >
-              bb-apis.vercel.app/redirect
+              make.flynet.org
             </a>{" "}
             and add it there.
           </p>
@@ -792,288 +716,6 @@ function TunnelStep({
   );
 }
 
-// ── Prompts view: the hackathon dev journey ─────────────────────────────────
-type StepStatus = "not_started" | "in_progress" | "done";
-type JourneyState = {
-  exists: boolean;
-  steps?: Record<string, { status?: StepStatus }>;
-};
-
-function PromptsView() {
-  // Poll the journey tracker so mandatory-step status stays fresh while the
-  // agent works in another pane. .flynet/journey.json is written by the skills.
-  const [journey, setJourney] = useState<JourneyState | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/dev/journey");
-      setJourney((await res.json()) as JourneyState);
-    } catch {
-      setJourney({ exists: false });
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 4000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  const statusOf = (id: string): StepStatus =>
-    journey?.steps?.[id]?.status ?? "not_started";
-
-  return (
-    <div className="space-y-6">
-      <p className="text-xs leading-relaxed text-subtle">
-        Run these in order. Tap a card to copy a prompt, then paste it to Claude.
-        Optional helpers live below — reach for them whenever they help.
-      </p>
-
-      {/* Mandatory, linear, completion-tracked. */}
-      <div className="space-y-3">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-          Steps
-        </h3>
-        {STEPS.map((step, i) => (
-          <StepCard
-            key={step.id}
-            index={i + 1}
-            step={step}
-            status={statusOf(step.id)}
-          />
-        ))}
-      </div>
-
-      {/* Optional, untracked. */}
-      <div className="space-y-3">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-          Others
-        </h3>
-        {OTHERS.map((step) => (
-          <StepCard key={step.id} step={step} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// A single journey card. `index`/`status` are only passed for tracked steps;
-// optional helpers render without a number or status pip. Tapping copies the
-// step's trigger prompt.
-function StepCard({
-  step,
-  index,
-  status,
-}: {
-  step: JourneyStep;
-  index?: number;
-  status?: StepStatus;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(step.prompt);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard can be blocked on non-secure origins; the command is visible.
-    }
-  }
-
-  const tracked = typeof index === "number";
-  const done = status === "done";
-  const active = status === "in_progress";
-
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className={`w-full rounded-2xl border bg-surface-low/40 p-4 text-left transition hover:bg-surface-low ${
-        active ? "border-primary" : "border-strong"
-      }`}
-    >
-      <div className="flex items-center gap-3">
-        {tracked ? (
-          <span
-            className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-              done
-                ? "bg-success/15 text-success"
-                : active
-                  ? "bg-primary/15 text-primary-bright"
-                  : "bg-surface text-muted"
-            }`}
-          >
-            {done ? "✓" : index}
-          </span>
-        ) : null}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h4 className="truncate text-sm font-semibold text-foreground">
-              {step.title}
-            </h4>
-            {active ? (
-              <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-bright">
-                In progress
-              </span>
-            ) : null}
-            {done ? (
-              <span className="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
-                Done
-              </span>
-            ) : null}
-          </div>
-          <p className="truncate text-xs text-subtle">{step.subtitle}</p>
-        </div>
-        <span className="ml-auto shrink-0 text-[11px] text-muted">
-          {copied ? "Copied!" : "Copy"}
-        </span>
-      </div>
-      <code className="mt-3 block font-mono text-[11px] text-primary-bright">
-        {step.command}
-      </code>
-    </button>
-  );
-}
-
-// ── Progress view: live task status from a /to-work run ──────────────────────
-type Task = {
-  id: string;
-  title: string;
-  issue: string | null;
-  status: "pending" | "in_progress" | "done" | "blocked" | "failed";
-  agent: string | null;
-  commit: string | null;
-  note: string | null;
-};
-type ProgressState = {
-  exists: boolean;
-  parseError?: boolean;
-  feature?: string | null;
-  tasks?: Task[];
-  updatedAt?: string;
-};
-
-const TASK_STYLE: Record<Task["status"], { dot: string; label: string }> = {
-  pending: { dot: "bg-subtle", label: "text-muted" },
-  in_progress: { dot: "bg-primary-bright", label: "text-primary-bright" },
-  done: { dot: "bg-success", label: "text-success" },
-  blocked: { dot: "bg-brand-yellow", label: "text-brand-yellow" },
-  failed: { dot: "bg-failure", label: "text-failure" },
-};
-
-function ProgressView() {
-  const [state, setState] = useState<ProgressState | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/dev/progress");
-      setState((await res.json()) as ProgressState);
-    } catch {
-      setState({ exists: false });
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Poll while the view is mounted — agents update progress.json as they go.
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 2500);
-    return () => clearInterval(t);
-  }, [load]);
-
-  if (loading && !state) return <Skeleton />;
-
-  if (!state?.exists) {
-    return (
-      <div className="rounded-2xl border border-strong bg-surface-low/40 p-6 text-center">
-        <p className="text-sm font-semibold text-foreground">No run in flight</p>
-        <p className="mt-1 text-xs text-subtle">
-          Start the <code className="font-mono text-primary-bright">/to-work</code>{" "}
-          step and task status will appear here, updating live.
-        </p>
-      </div>
-    );
-  }
-
-  const tasks = state.tasks ?? [];
-  const done = tasks.filter((t) => t.status === "done").length;
-  const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
-
-  return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <div className="flex items-center justify-between text-sm">
-          <span className="font-semibold text-foreground">
-            {state.feature ?? "Tasks"}
-          </span>
-          <span className="text-xs text-muted">
-            {done}/{tasks.length} done
-          </span>
-        </div>
-        <div className="h-2 overflow-hidden rounded-full bg-surface-low">
-          <div
-            className="h-full rounded-full bg-success transition-all duration-300 ease-standard"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </div>
-
-      {tasks.length === 0 ? (
-        <p className="text-xs text-subtle">
-          No tasks recorded yet — they appear as the run is seeded.
-        </p>
-      ) : (
-        <ul className="space-y-2">
-          {tasks.map((t) => {
-            const style = TASK_STYLE[t.status];
-            return (
-              <li
-                key={t.id}
-                className="rounded-xl border border-strong bg-surface-low/40 p-3"
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`inline-block h-2 w-2 shrink-0 rounded-full ${style.dot} ${
-                      t.status === "in_progress" ? "animate-pulse" : ""
-                    }`}
-                  />
-                  <span className="truncate text-sm text-foreground">
-                    {t.title}
-                  </span>
-                  <span
-                    className={`ml-auto shrink-0 text-[11px] font-medium ${style.label}`}
-                  >
-                    {t.status.replace("_", " ")}
-                  </span>
-                </div>
-                {(t.agent || t.commit || t.note) && (
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-4 text-[11px] text-muted">
-                    {t.agent ? <span>· {t.agent}</span> : null}
-                    {t.commit ? (
-                      <code className="font-mono">{t.commit.slice(0, 7)}</code>
-                    ) : null}
-                    {t.note ? <span className="italic">{t.note}</span> : null}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {state.updatedAt ? (
-        <p className="text-center text-[11px] text-subtle">
-          updated {new Date(state.updatedAt).toLocaleTimeString()}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-// A tappable card in the setup view that navigates to another drawer view.
 // ── Deploy view: ship to Vercel ──────────────────────────────────────────────
 // Hand this to the agent to do the whole deploy — push, create the project, set
 // the secrets, and report back the callback URL to whitelist.
@@ -1167,12 +809,12 @@ function DeployView() {
               </code>{" "}
               at{" "}
               <a
-                href="https://bb-apis.vercel.app/redirect"
+                href="https://make.flynet.org/"
                 target="_blank"
                 rel="noreferrer"
                 className="text-primary-bright underline underline-offset-2"
               >
-                bb-apis.vercel.app/redirect
+                make.flynet.org
               </a>{" "}
               (sign in with your Slack email). On a custom domain, set{" "}
               <code className="font-mono text-foreground">REDIRECT_URI</code> to
@@ -1220,12 +862,12 @@ function DeployView() {
         <code className="font-mono">https://&lt;your-app&gt;.vercel.app/callback</code>{" "}
         at{" "}
         <a
-          href="https://bb-apis.vercel.app/redirect"
+          href="https://make.flynet.org/"
           target="_blank"
           rel="noreferrer"
           className="underline underline-offset-2"
         >
-          bb-apis.vercel.app/redirect
+          make.flynet.org
         </a>{" "}
         or sign-in will fail.
       </p>

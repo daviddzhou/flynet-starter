@@ -21,10 +21,9 @@ export async function POST(req: Request) {
     );
   }
 
-  // FLYNET_MERCHANT_ID is optional. Set it to collect into a specific merchant
-  // (e.g. from your onboarding email). Leave it unset to let the app pay itself:
-  // the member JWT already identifies the merchant, so no id is needed — the
-  // token alone is enough and the payment just works.
+  // FLYNET_MERCHANT_ID is optional (core@0.8.0 made flynetMerchantId optional):
+  // set it to collect into a specific merchant, or leave it unset to route the
+  // payment to your own developer merchant. We omit the field when it's unset.
   const merchantId = env.FLYNET_MERCHANT_ID;
 
   let body: { amountFlyWei?: string; description?: string };
@@ -50,9 +49,7 @@ export async function POST(req: Request) {
 
   try {
     const intent = await member.createPaymentIntent({
-      // Only send a merchant id when one is configured; omitting it makes the
-      // app pay itself off the JWT. (The SDK types still mark this required, so
-      // we omit the key rather than pass an empty string.)
+      // Optional in core@0.8.0 — omit it (unset) to pay your developer merchant.
       ...(merchantId ? { flynetMerchantId: merchantId } : {}),
       customerUserId: userId,
       amount: { value: body.amountFlyWei, currency: "FLY" },
@@ -60,7 +57,7 @@ export async function POST(req: Request) {
       // Demo: every click is a new order. In a real app, pass your order id so
       // retries dedupe onto the same intent instead of double-charging.
       idempotencyKey: crypto.randomUUID(),
-    } as Parameters<typeof member.createPaymentIntent>[0]);
+    });
 
     const paid = await member.confirmPaymentIntent({
       id: intent.id,

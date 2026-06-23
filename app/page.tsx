@@ -8,6 +8,8 @@ import { OpenDevSetupButton } from "../components/dev-drawer";
 import { ACCESS_COOKIE } from "../lib/auth";
 import { listRestaurantLocations } from "../lib/locations";
 import { getRestaurantCheckInCount } from "../lib/check-ins";
+import { listRestaurantSpecials } from "../lib/specials";
+import { listRestaurantChallenges } from "../lib/challenges";
 import { env } from "../lib/env";
 import { MemberPanel } from "./member-panel";
 
@@ -90,11 +92,13 @@ async function renderRestaurants(apiKey: string | undefined): Promise<ReactNode>
   if (!apiKey) return <SetupNotice />;
   try {
     const restaurants = await loadRestaurants(apiKey, env.API_BASE_URL);
-    // Locations and check-in counts are separate Discovery resources — fetch
-    // both in parallel, one call per listed restaurant (raw fetch; see
-    // lib/locations.ts and lib/check-ins.ts). A failed lookup just drops that
-    // bit of the card (the location line, or the check-in stat).
-    const [locations, checkInCounts] = await Promise.all([
+    // Locations, check-in counts, specials, and challenges are separate
+    // Discovery resources — fetch them in parallel, one call per listed
+    // restaurant (raw fetch; see lib/locations.ts, lib/check-ins.ts,
+    // lib/specials.ts, lib/challenges.ts). A failed lookup just drops that bit
+    // of the card (the location line, the check-in stat, the offers, or the
+    // challenges row).
+    const [locations, checkInCounts, specials, challenges] = await Promise.all([
       Promise.all(
         restaurants.map((restaurant) =>
           listRestaurantLocations(apiKey, restaurant.id).catch(() => []),
@@ -103,6 +107,16 @@ async function renderRestaurants(apiKey: string | undefined): Promise<ReactNode>
       Promise.all(
         restaurants.map((restaurant) =>
           getRestaurantCheckInCount(apiKey, restaurant.id).catch(() => null),
+        ),
+      ),
+      Promise.all(
+        restaurants.map((restaurant) =>
+          listRestaurantSpecials(apiKey, restaurant.id).catch(() => []),
+        ),
+      ),
+      Promise.all(
+        restaurants.map((restaurant) =>
+          listRestaurantChallenges(apiKey, restaurant.id).catch(() => []),
         ),
       ),
     ]);
@@ -115,6 +129,8 @@ async function renderRestaurants(apiKey: string | undefined): Promise<ReactNode>
               restaurant={restaurant}
               locations={locations[i]}
               checkInCount={checkInCounts[i]}
+              specials={specials[i]}
+              challenges={challenges[i]}
             />
           ))}
         </div>

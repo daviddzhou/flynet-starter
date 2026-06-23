@@ -1,5 +1,7 @@
 import type { Restaurant } from "@flynetdev/react";
 import type { RestaurantLocation } from "../lib/locations";
+import type { RestaurantSpecial } from "../lib/specials";
+import type { RestaurantChallenge } from "../lib/challenges";
 import { Tag } from "./tag";
 
 // "Williamsburg · Brooklyn", with "+N more" when the restaurant has several
@@ -15,16 +17,21 @@ function locationLine(locations: RestaurantLocation[]): string | null {
 
 // One restaurant from Flynet Discovery. Server-safe — render it straight from
 // the listRestaurants response. Pass `locations` (lib/locations.ts) to show
-// where it is and its booking link, and `checkInCount` (lib/check-ins.ts) to
-// show how many times members have checked in.
+// where it is and its booking link, `checkInCount` (lib/check-ins.ts) for the
+// check-in stat, `specials` (lib/specials.ts) to surface active offers, and
+// `challenges` (lib/challenges.ts) for active reward challenges.
 export function RestaurantCard({
   restaurant,
   locations = [],
   checkInCount = null,
+  specials = [],
+  challenges = [],
 }: {
   restaurant: Restaurant;
   locations?: RestaurantLocation[];
   checkInCount?: number | null;
+  specials?: RestaurantSpecial[];
+  challenges?: RestaurantChallenge[];
 }) {
   const image =
     restaurant.asset?.web2x ??
@@ -76,6 +83,39 @@ export function RestaurantCard({
             </span>
           )}
         </div>
+        {specials.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap gap-1.5">
+              {specials.slice(0, 2).map((special) => (
+                <span
+                  key={special.id}
+                  className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
+                >
+                  {special.emoji && <span aria-hidden>{special.emoji}</span>}
+                  {special.label}
+                </span>
+              ))}
+            </div>
+            {specials[0]?.description && (
+              <p className="line-clamp-1 text-xs text-muted">
+                {specials[0].description}
+              </p>
+            )}
+          </div>
+        )}
+        {challenges.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {challenges.slice(0, 2).map((challenge) => (
+              <span
+                key={challenge.id}
+                className="inline-flex items-center gap-1 rounded-full border border-primary/30 px-2 py-0.5 text-xs font-medium text-foreground"
+              >
+                <span aria-hidden>🎯</span>
+                {challenge.title}
+              </span>
+            ))}
+          </div>
+        )}
         {typeof checkInCount === "number" && checkInCount > 0 && (
           <div className="flex items-center gap-1.5 text-xs text-muted">
             <PinIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
