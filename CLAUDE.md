@@ -41,6 +41,24 @@ Before the env is set, the app renders a setup notice rather than real data —
 that is the expected pre-configuration state, so don't try to "fix" it by
 writing env values.
 
+## Building the user's app: prune the starter components
+
+The starter ships a full demo on `page.tsx` — the restaurant list, the member
+panel (profile, wallet, claim-reward, pay), and the special/challenge pills — to
+show the SDK working end to end. It's scaffolding to build _from_, not a layout
+to preserve. When you start building the user's actual app, treat these as
+removable: **delete or replace any starter component that doesn't fit the user's
+flow** rather than leaving it stacked around their feature.
+
+- Keep only what their flow actually reuses (a component, hook, or route); remove
+  the rest — don't leave orphaned demo sections, unrelated cards, or the
+  `👉 Your code goes here` marker sitting above/below the real app.
+- When you remove a component, remove its now-dead data fetch too — its `lib/*`
+  fetcher, its slot in the `page.tsx` `Promise.all` fan-out, and its props — so
+  you don't keep paying for data nothing renders (see "Keep API usage lean").
+- If it's not obvious from the user's flow which starter pieces should stay, ask
+  before deleting wholesale rather than guessing.
+
 ## When the SDK breaks, call the API directly
 
 This app is built on the Flynet SDK (`@flynetdev/core` / `@flynetdev/react`). If
@@ -88,5 +106,5 @@ live.
 
 The redirect URI (ngrok URL or deployed domain + `/callback`) must be
 whitelisted for the OAuth app. The human does this at
-<https://bb-apis.vercel.app/redirect> (sign in with their Slack email). Direct
+<https://make.flynet.org/> (sign in with their Slack email). Direct
 them there; it isn't something you can do for them.

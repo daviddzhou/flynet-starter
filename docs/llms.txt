@@ -1,5 +1,54 @@
+# Get the calling app
+Source: https://docs.flynet.org/api-reference/app/get
+
+GET /app
+
+Returns the calling application's own record — its `flynet_merchant_id`,
+`allowed_scopes`, owning account, and status. The app is resolved from the
+API key, so there is no ID in the path.
+
+Use it to look up your `flynet_merchant_id` for
+[payment-intent creation](/api-reference/payments/create) without waiting on
+the onboarding email.
+
+Auth: API key in `X-API-Key`. The key must carry the `read:app` scope.
+
+## Example
+
+```bash theme={null}
+curl "https://api.staging.blackbird.xyz/flynet/v1/app" \
+  -H "X-API-Key: $API_KEY"
+```
+
+## Response
+
+```json theme={null}
+{
+  "id": "7b3c6d8e-0f12-4a5b-8c9d-1e2f3a4b5c6d",
+  "object": "app",
+  "name": "Corner Suite",
+  "flynet_merchant_id": "2c8f0e5a-1d4b-4c9e-9f2a-7b3c6d8e0f12",
+  "allowed_scopes": ["read:app", "read:checkins", "read:profile", "read:wallets"],
+  "active": true,
+  "created_at": "2026-05-07T18:18:31.078859Z",
+  "account": {
+    "id": "9a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d",
+    "company_name": "Corner Suite, Inc.",
+    "contact_email": "dev@cornersuite.example"
+  }
+}
+```
+
+| Field                | Type   | Notes                                                                |
+| -------------------- | ------ | -------------------------------------------------------------------- |
+| `id`                 | UUID   | Your app's client ID.                                                |
+| `flynet_merchant_id` | UUID   | Pass this when creating payment intents.                             |
+| `allowed_scopes`     | array  | Scopes this app may grant to its keys and tokens.                    |
+| `account`            | object | The owning developer account: `id`, `company_name`, `contact_email`. |
+
+
 # Retrieve a check-in
-Source: https://flynet-dev-portal.mintlify.app/api-reference/check-ins/get
+Source: https://docs.flynet.org/api-reference/check-ins/get
 
 GET /check_ins/{id}
 
@@ -7,13 +56,16 @@ Returns one check-in by UUID. The response embeds the location,
 restaurant, and neighborhood needed to render the row. Check-ins carry
 no member identity.
 
-Auth: OAuth access token.
+Auth: **API key** in `X-API-Key`, minted with the `read:checkins` scope
+— the same credential as the [`/check_ins` venue feed](/api-reference/check-ins/list).
+A key without that scope returns `403` `insufficient_scope`; a missing
+key returns an empty-body `401` with a `WWW-Authenticate: Bearer` header.
 
 ## Example
 
 ```bash theme={null}
 curl https://api.staging.blackbird.xyz/flynet/v1/check_ins/{uuid} \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+  -H "X-API-Key: $API_KEY"
 ```
 
 ## Response
@@ -22,8 +74,22 @@ curl https://api.staging.blackbird.xyz/flynet/v1/check_ins/{uuid} \
 {
   "id": "{uuid}",
   "object": "check_in",
-  "location": { "id": "{uuid}", "object": "location" },
-  "visit_number": 25,
+  "location": {
+    "id": "{uuid}",
+    "object": "location",
+    "name": "FLYBAR — Williamsburg",
+    "restaurant": {
+      "id": "{uuid}",
+      "object": "restaurant",
+      "name": "FLYBAR"
+    },
+    "neighborhood": {
+      "id": "{uuid}",
+      "object": "neighborhood",
+      "name": "Williamsburg"
+    }
+  },
+  "blackbird_pay_enabled": true,
   "created_at": "2024-09-26T13:56:56.22107Z",
   "ended_at": "2024-09-26T13:56:56.22107Z"
 }
@@ -31,47 +97,74 @@ curl https://api.staging.blackbird.xyz/flynet/v1/check_ins/{uuid} \
 
 
 # List check-ins
-Source: https://flynet-dev-portal.mintlify.app/api-reference/check-ins/list
+Source: https://docs.flynet.org/api-reference/check-ins/list
 
 GET /check_ins
 
-Returns paginated check-ins, optionally narrowed by the filters below.
+Returns the global check-in feed, newest first, optionally narrowed
+by the filters below. Records are **anonymized**: each carries the
+fully expanded location (with its restaurant), but no user field, so
+the feed cannot be attributed to members. For a member's own history
+use [`GET /users/me/check_ins`](/api-reference/users/list-check-ins).
+
+<Warning>
+  **Chef's warning** - The `user` filter is gone. Passing `user=` (or
+  `user_id=`) is silently ignored and returns the full unfiltered list —
+  and since records carry no user field, there is nothing to match
+  client-side either. Filter by `restaurant` or `location`.
+</Warning>
 
 <Note>
   **Tasting note** - All filters are optional. A bare `GET /check_ins`
-  returns the full paginated set, so page deliberately when you omit
-  filters.
+  returns the full paginated set (\~15.7k records in staging), so page
+  deliberately when you omit filters.
 </Note>
 
-Auth: OAuth access token.
+Auth: API key in `X-API-Key` — no user token needed. Two requirements
+beyond the header:
+
+1. The key must carry the **`read:checkins` scope**. Key scopes are set
+   in the body of the key-mint request; the app's `allowed_scopes` are
+   **not** inherited, so a key minted with an empty body gets `403`
+   here even if its app lists `read:checkins`.
+2. Send a non-empty `User-Agent`. The edge rejects a **missing or
+   empty** `User-Agent` with a `403` HTML body, but any non-empty value
+   — including SDK and `curl` defaults — passes.
+
+| Auth state                  | Response                   |
+| --------------------------- | -------------------------- |
+| No `X-API-Key` header       | `401` `MISSING_API_KEY`    |
+| Key without `read:checkins` | `403` `insufficient_scope` |
+| Key with `read:checkins`    | `200`                      |
 
 ## Filters
 
-| Parameter        | Type               | Notes                                                          |
-| ---------------- | ------------------ | -------------------------------------------------------------- |
-| `user`           | UUID               | Returns check-ins for this user.                               |
-| `restaurant`     | UUID               | Returns check-ins at any location of this restaurant.          |
-| `location`       | UUID               | Returns check-ins at this specific location.                   |
-| `created_after`  | ISO 8601 timestamp | Inclusive lower bound on `created_at`. Epoch seconds rejected. |
-| `created_before` | ISO 8601 timestamp | Exclusive upper bound on `created_at`.                         |
-| `sort_order`     | `asc` or `desc`    | Default `desc`.                                                |
-| `page`           | integer            | Default `0`.                                                   |
-| `page_size`      | integer            | Default `50`.                                                  |
+| Parameter        | Type               | Notes                                                         |
+| ---------------- | ------------------ | ------------------------------------------------------------- |
+| `restaurant`     | UUID               | Returns check-ins at any location of this restaurant.         |
+| `location`       | UUID               | Returns check-ins at this specific location.                  |
+| `created_after`  | ISO 8601 timestamp | Visits created on/after this instant. Epoch seconds rejected. |
+| `created_before` | ISO 8601 timestamp | Visits created before this instant.                           |
+| `page`           | integer            | Zero-indexed. Default `0`.                                    |
+| `page_size`      | integer            | Default `50`.                                                 |
 
-Combinations AND together. `?user={uuid}&restaurant={uuid}&created_after=2026-04-01T00:00:00Z`
-returns only that user's check-ins at that restaurant since the cutoff.
+Combinations AND together. `?restaurant={uuid}&created_after=2026-06-01T00:00:00Z`
+returns only that restaurant's check-ins since the cutoff.
 
 <Note>
-  **Tasting note** - Unknown filter names are silently ignored. A typo
-  like `users=` instead of `user=` is treated as no filter and returns
-  the unfiltered set.
+  **Tasting note** - The filter key is the bare resource name, same trap
+  as [`/memberships`](/api-reference/memberships/list): `restaurant`,
+  not `restaurant_id`. Unknown filter names (`restaurant_id`,
+  `location_id`, `user`, `user_id`) are silently ignored and return the
+  unfiltered set. A well-formed UUID that matches nothing is not an
+  error — it returns `200` with an empty list and `total_count: 0`.
 </Note>
 
 ## Example
 
 ```bash theme={null}
-curl "https://api.staging.blackbird.xyz/flynet/v1/check_ins?user={uuid}&sort_order=desc&page_size=25" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+curl "https://api.staging.blackbird.xyz/flynet/v1/check_ins?restaurant={uuid}&created_after=2026-06-01T00:00:00Z" \
+  -H "X-API-Key: $API_KEY"
 ```
 
 ## Response
@@ -80,23 +173,83 @@ curl "https://api.staging.blackbird.xyz/flynet/v1/check_ins?user={uuid}&sort_ord
 {
   "check_ins": [
     {
-      "id": "{uuid}",
+      "id": "dce67498-5d0a-4455-9bcf-95d54c033b02",
       "object": "check_in",
-      "location": { "id": "{uuid}", "object": "location" },
-      "visit_number": 25,
-      "created_at": "2024-09-26T13:56:56.22107Z",
-      "ended_at": "2024-09-26T13:56:56.22107Z"
+      "location": {
+        "id": "c8d79a1f-6cb8-4e6d-9b58-b2796cd6cdad",
+        "object": "location",
+        "name": "CLOVER",
+        "restaurant": {
+          "id": "abd27597-6ffd-4ad0-a958-33a7f2d5afe7",
+          "object": "restaurant",
+          "name": "FLYBAR",
+          "cuisine": ["Italian"],
+          "cohort": "qsr",
+          "price": 3,
+          "tags": [],
+          "asset": {
+            "preview_1x": "https://images.blackbird.xyz/rock/1x.png?expire=8782ddb89c",
+            "web_2x": "https://images.blackbird.xyz/rock/2x.png?expire=8782ddb89c",
+            "full_3x": "https://images.blackbird.xyz/rock/3x.png?expire=8782ddb89c"
+          },
+          "website_url": "https://barbutonyc.com",
+          "instagram_url": null,
+          "created_at": "2024-01-15T20:21:23.253929Z",
+          "updated_at": "2026-06-11T09:00:48.460864Z"
+        },
+        "neighborhood": {
+          "id": "df7c85e9-907e-41cf-84f2-efb86175e89b",
+          "object": "neighborhood",
+          "name": "Astoria",
+          "region": "New York, NY"
+        },
+        "slug": "flybar-clover",
+        "address": {
+          "street": "14-01 Broadway",
+          "street2": "",
+          "city": "Astoria",
+          "state": "NY",
+          "zipcode": "11106",
+          "country": "USA"
+        },
+        "coordinate": { "latitude": 40.72556, "longitude": -73.99513 },
+        "phone_number": "+19176229717",
+        "time_zone": "America/New_York",
+        "payments_enabled": true,
+        "is_club": false,
+        "reservation_url": null,
+        "reservations_enabled": false,
+        "google_place_id": null,
+        "created_at": "2026-05-11T17:20:12.798637Z",
+        "updated_at": "2026-06-09T17:57:08.762073Z"
+      },
+      "blackbird_pay_enabled": true,
+      "created_at": "2026-06-10T17:32:56.113304Z",
+      "ended_at": "2026-06-10T17:45:00.949869Z"
     }
   ],
   "pagination": {
-    "total_count": 562,
-    "total_pages": 23,
+    "total_count": 26,
+    "total_pages": 26,
     "current_page": 0,
     "next_page": 1,
-    "page_size": 25
+    "page_size": 1
   }
 }
 ```
+
+## Schema
+
+| Field                   | Type                       | Notes                                                                                                    |
+| ----------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `id`                    | UUID                       | Check-in id.                                                                                             |
+| `object`                | string                     | Always `"check_in"`.                                                                                     |
+| `location`              | object                     | Fully expanded location, including its nested `restaurant`, `neighborhood`, `address`, and `coordinate`. |
+| `blackbird_pay_enabled` | boolean                    | Whether Blackbird Pay was available for the visit.                                                       |
+| `created_at`            | ISO 8601 timestamp         | Visit start — this is the timestamp the date filters apply to.                                           |
+| `ended_at`              | ISO 8601 timestamp \| null | Visit end. `null` for ongoing visits.                                                                    |
+
+There is **no user field**.
 
 ## Errors
 
@@ -107,28 +260,56 @@ curl "https://api.staging.blackbird.xyz/flynet/v1/check_ins?user={uuid}&sort_ord
   "error": {
     "type": "invalid_request_error",
     "code": "invalid_parameter",
-    "message": "Parse attempt failed for value [1715468700]",
+    "message": "Parse attempt failed for value [1748736000]",
     "param": null
   }
 }
 ```
 
-### 400 - invalid sort order
+### 400 - malformed UUID
 
 ```json theme={null}
 {
   "error": {
     "type": "invalid_request_error",
     "code": "invalid_parameter",
-    "message": "Invalid value for order.",
+    "message": "Invalid UUID string: not-a-uuid",
     "param": null
   }
 }
 ```
 
+### 401 - missing API key
+
+```json theme={null}
+{
+  "status": 401,
+  "message": "API key is required...",
+  "error_code": "MISSING_API_KEY"
+}
+```
+
+### 403 - key missing the scope
+
+```json theme={null}
+{
+  "error": {
+    "type": "authorization_error",
+    "code": "insufficient_scope",
+    "message": "Missing required scope: read:checkins",
+    "param": null
+  }
+}
+```
+
+## See also
+
+* [List my check-ins](/api-reference/users/list-check-ins): a member's own history, via their OAuth token.
+* [Check-in feed](/recipes/mains/check-in-feed): render a feed from one filtered call.
+
 
 # Introduction
-Source: https://flynet-dev-portal.mintlify.app/api-reference/introduction
+Source: https://docs.flynet.org/api-reference/introduction
 
 Flynet API on staging - interactive reference.
 
@@ -142,8 +323,8 @@ This reference documents Flynet's launch API under:
 
 Flynet uses two credentials:
 
-* OAuth bearer tokens for `/users/me/*`, `/check_ins*`, `/memberships`, and `/payment_intents/*`
-* API keys in `X-API-Key` for `/restaurants*` and `/locations*`
+* OAuth bearer tokens for `/users/me/*` and `/payment_intents/*`
+* API keys in `X-API-Key` for `/restaurants*`, `/locations*`, and the `/check_ins` venue feed including `/check_ins/{id}` (key minted with `read:checkins`)
 
 Member routes resolve the subject from the token and are gated by
 scope. See [Authentication](/concepts/authentication) for the per-route
@@ -171,7 +352,7 @@ handling.
 
 
 # Retrieve a location
-Source: https://flynet-dev-portal.mintlify.app/api-reference/locations/get
+Source: https://docs.flynet.org/api-reference/locations/get
 
 GET /locations/{id}
 
@@ -212,7 +393,7 @@ curl https://api.staging.blackbird.xyz/flynet/v1/locations/{uuid} \
 
 
 # List locations
-Source: https://flynet-dev-portal.mintlify.app/api-reference/locations/list
+Source: https://docs.flynet.org/api-reference/locations/list
 
 GET /locations
 
@@ -257,7 +438,7 @@ curl "https://api.staging.blackbird.xyz/flynet/v1/locations?page=0&page_size=25"
 
 
 # List location open hours
-Source: https://flynet-dev-portal.mintlify.app/api-reference/locations/open-hours
+Source: https://docs.flynet.org/api-reference/locations/open-hours
 
 GET /locations/{id}/open_hours
 
@@ -292,15 +473,16 @@ Missing days imply the location is closed on that day.
 
 
 # List memberships
-Source: https://flynet-dev-portal.mintlify.app/api-reference/memberships/list
+Source: https://docs.flynet.org/api-reference/memberships/list
 
-GET /memberships
+GET /users/me/memberships
 
-Returns paginated membership records, one per `(member, restaurant)`
-pair, each carrying a `check_in_count` and the member's
-`membership_tier` at that restaurant. This is the canonical source for
-per-restaurant check-in totals: filter by `restaurant` and sum
-`check_in_count` across the result.
+Returns the authenticated member's paginated membership records, one per
+restaurant, each carrying a `check_in_count` and the member's
+`membership_tier` at that restaurant. The subject is resolved from the
+access token, so there is no member ID in the path. This is the
+canonical source for the member's per-restaurant check-in totals: filter
+by `restaurant` and sum `check_in_count` across the result.
 
 <Warning>
   **Chef's warning** - The filter key is `restaurant` (a UUID), **not**
@@ -310,19 +492,20 @@ per-restaurant check-in totals: filter by `restaurant` and sum
 </Warning>
 
 <Note>
-  **Tasting note** - There is no `GET /memberships/{id}`; the filtered
-  list is the only accessor. Server-side sorting isn't applied: `sort`
-  and friends are accepted but ignored, so sort `check_in_count`
+  **Tasting note** - There is no `GET /users/me/memberships/{id}`; the
+  filtered list is the only accessor. Server-side sorting isn't applied:
+  `sort` and friends are accepted but ignored, so sort `check_in_count`
   client-side for leaderboards.
 </Note>
 
-Auth: OAuth access token. Accessible with a token carrying
-`read:profile read:checkins`.
+Auth: OAuth access token carrying `read:memberships`. A token missing
+that scope returns `403` with `error="insufficient_scope"` in the
+`WWW-Authenticate` header.
 
 ## Example
 
 ```bash theme={null}
-curl "https://api.staging.blackbird.xyz/flynet/v1/memberships?restaurant=2cb56d03-4417-4b60-afe3-be819ecde8ac&page=0&page_size=50" \
+curl "https://api.staging.blackbird.xyz/flynet/v1/users/me/memberships?restaurant=2cb56d03-4417-4b60-afe3-be819ecde8ac&page=0&page_size=50" \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
@@ -376,18 +559,16 @@ curl "https://api.staging.blackbird.xyz/flynet/v1/memberships?restaurant=2cb56d0
 | Param        | Type    | Notes                                                    |
 | ------------ | ------- | -------------------------------------------------------- |
 | `restaurant` | UUID    | Filter to one restaurant. Use this, not `restaurant_id`. |
-| `user`       | UUID    | Filter to one member. Combines with `restaurant`.        |
 | `page`       | integer | Zero-indexed.                                            |
 | `page_size`  | integer | Default `50`. Uncapped.                                  |
 
 ## See also
 
-* [Staff leaderboard](/recipes/specials/staff-leaderboard): rank regulars by `check_in_count`.
 * [Get my status](/api-reference/users/get-status): the member's tier and level.
 
 
 # Cancel a Payment Intent
-Source: https://flynet-dev-portal.mintlify.app/api-reference/payments/cancel
+Source: https://docs.flynet.org/api-reference/payments/cancel
 
 POST /payment_intents/{id}/cancel
 
@@ -425,7 +606,7 @@ curl -X POST https://api.staging.blackbird.xyz/flynet/v1/payment_intents/{uuid}/
 
 
 # Confirm a Payment Intent
-Source: https://flynet-dev-portal.mintlify.app/api-reference/payments/confirm
+Source: https://docs.flynet.org/api-reference/payments/confirm
 
 POST /payment_intents/{id}/confirm
 
@@ -473,7 +654,7 @@ curl -X POST https://api.staging.blackbird.xyz/flynet/v1/payment_intents/{uuid}/
 
 
 # Create a Payment Intent
-Source: https://flynet-dev-portal.mintlify.app/api-reference/payments/create
+Source: https://docs.flynet.org/api-reference/payments/create
 
 POST /payment_intents
 
@@ -540,7 +721,7 @@ with the existing intent.
 
 
 # List Payment Intents
-Source: https://flynet-dev-portal.mintlify.app/api-reference/payments/list
+Source: https://docs.flynet.org/api-reference/payments/list
 
 GET /payment_intents
 
@@ -592,7 +773,7 @@ curl "https://api.staging.blackbird.xyz/flynet/v1/payment_intents?page=0&page_si
 
 
 # Refund a Payment Intent
-Source: https://flynet-dev-portal.mintlify.app/api-reference/payments/refund
+Source: https://docs.flynet.org/api-reference/payments/refund
 
 POST /payment_intents/{id}/refund
 
@@ -630,7 +811,7 @@ curl -X POST https://api.staging.blackbird.xyz/flynet/v1/payment_intents/{uuid}/
 
 
 # Retrieve a Payment Intent
-Source: https://flynet-dev-portal.mintlify.app/api-reference/payments/retrieve
+Source: https://docs.flynet.org/api-reference/payments/retrieve
 
 GET /payment_intents/{id}
 
@@ -669,7 +850,7 @@ curl https://api.staging.blackbird.xyz/flynet/v1/payment_intents/{uuid} \
 
 
 # Retrieve a restaurant
-Source: https://flynet-dev-portal.mintlify.app/api-reference/restaurants/get
+Source: https://docs.flynet.org/api-reference/restaurants/get
 
 GET /restaurants/{id}
 
@@ -700,7 +881,7 @@ curl https://api.staging.blackbird.xyz/flynet/v1/restaurants/{uuid} \
 
 
 # List restaurants
-Source: https://flynet-dev-portal.mintlify.app/api-reference/restaurants/list
+Source: https://docs.flynet.org/api-reference/restaurants/list
 
 GET /restaurants
 
@@ -751,7 +932,7 @@ curl "https://api.staging.blackbird.xyz/flynet/v1/restaurants?page=0&page_size=2
 
 
 # List restaurant locations
-Source: https://flynet-dev-portal.mintlify.app/api-reference/restaurants/list-locations
+Source: https://docs.flynet.org/api-reference/restaurants/list-locations
 
 GET /restaurants/{id}/locations
 
@@ -793,8 +974,68 @@ curl "https://api.staging.blackbird.xyz/flynet/v1/restaurants/{uuid}/locations?p
 ```
 
 
+# Issue a reward
+Source: https://docs.flynet.org/api-reference/rewards/issue
+
+POST /issue_reward
+
+Issue a FLY reward from your app's wallet to a member. The transfer is
+immediate and credited straight to the member's wallet.
+
+Auth: API key in `X-API-Key`. The key must carry the `write:rewards` scope, and
+your app's wallet must hold enough FLY to cover the amount.
+
+<Warning>
+  **Chef's warning** — rewards are irreversible. There is no refund once issued.
+  The call is idempotent, though: replaying the same `idempotency_key` returns the
+  reward you already issued instead of sending a second one, so retries are safe.
+</Warning>
+
+## Example
+
+```bash theme={null}
+curl -X POST "https://api.staging.blackbird.xyz/flynet/v1/issue_reward" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "{uuid}",
+    "amount": { "value": "1000000000000000000", "currency": "FLY" },
+    "description": "Loyalty streak reward",
+    "idempotency_key": "reward-12345"
+  }'
+```
+
+## Response
+
+`201` on a new reward; `200` on an idempotent replay.
+
+```json theme={null}
+{
+  "id": "{uuid}",
+  "object": "reward",
+  "user_id": "{uuid}",
+  "amount": { "value": "1000000000000000000", "currency": "FLY" },
+  "description": "Loyalty streak reward",
+  "metadata": null,
+  "created_at": "2026-06-21T18:18:31.078859Z"
+}
+```
+
+| Field             | Type   | Notes                                                    |
+| ----------------- | ------ | -------------------------------------------------------- |
+| `id`              | UUID   | The reward id.                                           |
+| `amount.value`    | string | FLY in wei (18-decimal). Send and read it as a string.   |
+| `idempotency_key` | string | Replaying it returns the existing reward, not a new one. |
+
+<Note>
+  **Tasting note** — `amount.value` is FLY wei as a string: a 1 FLY reward is
+  `"1000000000000000000"`. Your app's wallet must hold enough FLY; an insufficient
+  balance is rejected, so top up before issuing.
+</Note>
+
+
 # Get my profile
-Source: https://flynet-dev-portal.mintlify.app/api-reference/users/get-me
+Source: https://docs.flynet.org/api-reference/users/get-me
 
 GET /users/me
 
@@ -862,7 +1103,7 @@ curl https://api.staging.blackbird.xyz/flynet/v1/users/me \
 
 
 # Get my status
-Source: https://flynet-dev-portal.mintlify.app/api-reference/users/get-status
+Source: https://docs.flynet.org/api-reference/users/get-status
 
 GET /users/me/status
 
@@ -953,7 +1194,7 @@ curl https://api.staging.blackbird.xyz/flynet/v1/users/me/status \
 
 
 # List my check-ins
-Source: https://flynet-dev-portal.mintlify.app/api-reference/users/list-check-ins
+Source: https://docs.flynet.org/api-reference/users/list-check-ins
 
 GET /users/me/check_ins
 
@@ -970,7 +1211,7 @@ scoped to the member.
   renders a feed without follow-ups.
 </Note>
 
-Auth: OAuth access token with the `read:checkins` scope. A token
+Auth: OAuth access token with the `read:user_checkins` scope. A token
 missing that scope returns `403` with `error="insufficient_scope"` in
 the `WWW-Authenticate` header.
 
@@ -989,8 +1230,22 @@ curl "https://api.staging.blackbird.xyz/flynet/v1/users/me/check_ins?page=0&page
     {
       "id": "10102587-b266-47e1-ad22-b3f23c1906e0",
       "object": "check_in",
-      "location": { "id": "62521fe6-ce1b-40b3-aceb-013245132ab0", "object": "location" },
-      "visit_number": 1,
+      "location": {
+        "id": "62521fe6-ce1b-40b3-aceb-013245132ab0",
+        "object": "location",
+        "name": "FLYBAR — Williamsburg",
+        "restaurant": {
+          "id": "2cb56d03-4417-4b60-afe3-be819ecde8ac",
+          "object": "restaurant",
+          "name": "FLYBAR"
+        },
+        "neighborhood": {
+          "id": "9f4b1c20-7e3a-4d18-9c2f-1a5d6b8e0c44",
+          "object": "neighborhood",
+          "name": "Williamsburg"
+        }
+      },
+      "blackbird_pay_enabled": true,
       "created_at": "2026-05-12T18:06:03.729568Z",
       "ended_at": "2026-05-12T18:06:29.131657Z"
     }
@@ -1005,18 +1260,18 @@ curl "https://api.staging.blackbird.xyz/flynet/v1/users/me/check_ins?page=0&page
 }
 ```
 
-The `location` object is returned in full (embedding its `restaurant`
-and `neighborhood`), trimmed here for brevity.
+Each `location` is returned in full, embedding its `restaurant` and
+`neighborhood`.
 
 ## Schema
 
-| Field                      | Type               | Notes                                                                                                 |
-| -------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------- |
-| `check_ins`                | array              | Each item is a `check_in`. See [`GET /check_ins`](/api-reference/check-ins/list) for the full object. |
-| `check_ins[].visit_number` | integer            | This member's running visit count **at this location**, not global.                                   |
-| `check_ins[].created_at`   | ISO 8601 timestamp | Visit start.                                                                                          |
-| `check_ins[].ended_at`     | ISO 8601 timestamp | Visit end, or `null` if ongoing.                                                                      |
-| `pagination`               | object             | Standard pagination wrapper. `next_page` is `null` on the last page.                                  |
+| Field                               | Type               | Notes                                                                                                 |
+| ----------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------- |
+| `check_ins`                         | array              | Each item is a `check_in`. See [`GET /check_ins`](/api-reference/check-ins/list) for the full object. |
+| `check_ins[].blackbird_pay_enabled` | boolean            | `true` if Blackbird Pay is enabled at this check-in's venue.                                          |
+| `check_ins[].created_at`            | ISO 8601 timestamp | Visit start.                                                                                          |
+| `check_ins[].ended_at`              | ISO 8601 timestamp | Visit end, or `null` if ongoing.                                                                      |
+| `pagination`                        | object             | Standard pagination wrapper. `next_page` is `null` on the last page.                                  |
 
 ## See also
 
@@ -1025,7 +1280,7 @@ and `neighborhood`), trimmed here for brevity.
 
 
 # List my tags
-Source: https://flynet-dev-portal.mintlify.app/api-reference/users/list-tags
+Source: https://docs.flynet.org/api-reference/users/list-tags
 
 GET /users/me/tags
 
@@ -1085,7 +1340,7 @@ A member with no tags returns `{ "tags": [] }`.
 
 
 # List my wallets
-Source: https://flynet-dev-portal.mintlify.app/api-reference/users/list-wallets
+Source: https://docs.flynet.org/api-reference/users/list-wallets
 
 GET /users/me/wallets
 
@@ -1137,7 +1392,7 @@ curl https://api.staging.blackbird.xyz/flynet/v1/users/me/wallets \
 
 
 # Agent skills & rules
-Source: https://flynet-dev-portal.mintlify.app/build-with-ai/agent-skills
+Source: https://docs.flynet.org/build-with-ai/agent-skills
 
 Install the Flynet agent skill for Claude Code and the Flynet rules for Cursor.
 
@@ -1185,7 +1440,7 @@ npx -y @flynetdev/skills cursor   # rules only
 
 
 # Architecture
-Source: https://flynet-dev-portal.mintlify.app/build-with-ai/architecture
+Source: https://docs.flynet.org/build-with-ai/architecture
 
 How the Flynet SDK and agent tooling are layered — and which layer to build on.
 
@@ -1241,7 +1496,7 @@ An agent writing Flynet code and a developer writing it are building against the
 
 
 # MCP servers
-Source: https://flynet-dev-portal.mintlify.app/build-with-ai/mcp-servers
+Source: https://docs.flynet.org/build-with-ai/mcp-servers
 
 Connect the Flynet Docs MCP and the Flynet API MCP to Claude Code, Cursor, and Claude Desktop.
 
@@ -1259,7 +1514,7 @@ The docs site hosts its own MCP server, so any MCP-aware agent can search Flynet
 <Tabs>
   <Tab title="Claude Code">
     ```bash theme={null}
-    claude mcp add --transport http flynet-docs https://flynet-dev-portal.mintlify.app/mcp
+    claude mcp add --transport http flynet-docs https://docs.flynet.org/mcp
     ```
   </Tab>
 
@@ -1269,22 +1524,35 @@ The docs site hosts its own MCP server, so any MCP-aware agent can search Flynet
     ```json theme={null}
     {
       "mcpServers": {
-        "flynet-docs": { "url": "https://flynet-dev-portal.mintlify.app/mcp" }
+        "flynet-docs": { "url": "https://docs.flynet.org/mcp" }
       }
     }
     ```
   </Tab>
 
   <Tab title="Claude Desktop">
-    Add to `claude_desktop_config.json`:
+    Claude Desktop adds remote servers through **Connectors**, not the config file. In **Settings → Connectors**, click **Add custom connector**, paste the URL, and click **Add** — no authentication needed:
 
-    ```json theme={null}
-    {
-      "mcpServers": {
-        "flynet-docs": { "url": "https://flynet-dev-portal.mintlify.app/mcp" }
-      }
-    }
     ```
+    https://docs.flynet.org/mcp
+    ```
+
+    Connectors are account-level, so adding it once (here or at [claude.ai/settings/connectors](https://claude.ai/settings/connectors)) makes it available across Claude Desktop and claude.ai.
+
+    <Note>
+      Don't put a bare `{ "url": ... }` entry in `claude_desktop_config.json` — that file only launches local (stdio) servers, and Desktop will ignore the entry. If you must use the config file, bridge the remote server with [`mcp-remote`](https://github.com/geelen/mcp-remote):
+
+      ```json theme={null}
+      {
+        "mcpServers": {
+          "flynet-docs": {
+            "command": "npx",
+            "args": ["-y", "mcp-remote", "https://docs.flynet.org/mcp"]
+          }
+        }
+      }
+      ```
+    </Note>
   </Tab>
 </Tabs>
 
@@ -1341,7 +1609,24 @@ Both are server-side secrets — keep them on your machine, never in client-side
   </Tab>
 
   <Tab title="Claude Desktop">
-    Add to `claude_desktop_config.json` — the same `mcpServers` block as Cursor.
+    The API MCP runs locally (stdio), so it goes straight in `claude_desktop_config.json` — no Connectors needed. Add the same block as Cursor:
+
+    ```json theme={null}
+    {
+      "mcpServers": {
+        "flynet": {
+          "command": "npx",
+          "args": ["-y", "@flynetdev/mcp"],
+          "env": {
+            "FLYNET_API_KEY": "bb_...",
+            "FLYNET_ACCESS_TOKEN": "ey..."
+          }
+        }
+      }
+    }
+    ```
+
+    The file lives at `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows). Restart Claude Desktop after editing.
   </Tab>
 </Tabs>
 
@@ -1358,7 +1643,7 @@ Every tool is read-only. List tools are paginated and return trimmed fields; pas
 | [`get_my_profile`](/api-reference/users/get-me)            | The signed-in member's profile and status | Access token |
 | [`get_my_wallets`](/api-reference/users/list-wallets)      | The member's wallets and balance          | Access token |
 | [`list_my_check_ins`](/api-reference/users/list-check-ins) | The member's own check-ins                | Access token |
-| [`list_check_ins`](/api-reference/check-ins/list)          | A venue's recent check-ins (anonymized)   | Access token |
+| [`list_check_ins`](/api-reference/check-ins/list)          | A venue's recent check-ins (anonymized)   | API key      |
 | [`list_my_memberships`](/api-reference/memberships/list)   | The member's per-restaurant memberships   | Access token |
 
 When a tool is called without the credential it needs, it returns a clear message naming the missing variable and the fix — not a stack trace.
@@ -1373,7 +1658,7 @@ When a tool is called without the credential it needs, it returns a clear messag
 
 
 # Build with AI
-Source: https://flynet-dev-portal.mintlify.app/build-with-ai/overview
+Source: https://docs.flynet.org/build-with-ai/overview
 
 Connect Flynet to Claude Code, Cursor, and other AI coding agents — live docs, an agent skill, and editor rules.
 
@@ -1388,7 +1673,7 @@ Flynet works with AI coding agents through four installable surfaces — live do
     Your agent searches the live Flynet docs in real time — no copy-paste, always current. Works in any MCP-aware client.
 
     ```bash theme={null}
-    claude mcp add --transport http flynet-docs https://flynet-dev-portal.mintlify.app/mcp
+    claude mcp add --transport http flynet-docs https://docs.flynet.org/mcp
     ```
   </Card>
 
@@ -1438,8 +1723,8 @@ Flynet works with AI coding agents through four installable surfaces — live do
 
 Every Flynet docs page is available as plain markdown for any model:
 
-* [`llms.txt`](https://flynet-dev-portal.mintlify.app/llms.txt) — an index of the docs, optimized for LLM context.
-* [`llms-full.txt`](https://flynet-dev-portal.mintlify.app/llms-full.txt) — the full docs as one file.
+* [`llms.txt`](https://docs.flynet.org/llms.txt) — an index of the docs, optimized for LLM context.
+* [`llms-full.txt`](https://docs.flynet.org/llms-full.txt) — the full docs as one file.
 * Append `.md` to any docs URL to get its markdown source.
 
 ## Next
@@ -1454,7 +1739,7 @@ Every Flynet docs page is available as plain markdown for any model:
 
 
 # Walkthrough: ship with Claude
-Source: https://flynet-dev-portal.mintlify.app/build-with-ai/walkthrough
+Source: https://docs.flynet.org/build-with-ai/walkthrough
 
 From an empty directory to a deployed Flynet app on Vercel — built with Claude Code, with your credentials handled safely the whole way.
 
@@ -1475,7 +1760,7 @@ mkdir my-flynet-app && cd my-flynet-app
 npx -y @flynetdev/skills
 
 # The Docs MCP — Claude reads these docs live while it writes
-claude mcp add --transport http flynet-docs https://flynet-dev-portal.mintlify.app/mcp
+claude mcp add --transport http flynet-docs https://docs.flynet.org/mcp
 
 # The API MCP — Claude calls Flynet directly to check its own work
 claude mcp add flynet --env FLYNET_API_KEY=bb_... -- npx -y @flynetdev/mcp
@@ -1508,8 +1793,16 @@ The rule that makes agent-assisted development safe: **the agent works with the 
 API_KEY=bb_...
 CLIENT_ID=...
 CLIENT_SECRET=...
-REDIRECT_URI=http://localhost:3000/callback
+REDIRECT_URI=https://your-subdomain.ngrok-free.app/callback
 ```
+
+<Note>
+  The OAuth `redirect_uri` must be a public, allowlisted URL — `localhost`
+  won't be registered. Run `ngrok http 3000` and register that exact URL as
+  your redirect URI (use a reserved ngrok domain so it's stable). Full detail
+  in [OAuth → Environment](/concepts/oauth#environment). The API-key-only
+  steps above work on plain `localhost`; only the OAuth step needs the tunnel.
+</Note>
 
 `create-next-app` gitignores `.env.local` by default — verify `.env*.local` is in your `.gitignore`. Then commit an `.env.example` with names only, so the repo documents what's needed without containing anything:
 
@@ -1567,7 +1860,7 @@ Scope variables to the environments that need them (`production`, `preview`, `de
 Update your app's redirect URI in your Flynet developer app to the deployed callback URL, and the OAuth flow works on the live site.
 
 <Note>
-  The SDK's named environment is `staging`, so your deployed app talks to the Flynet staging API. To target a different host, pass `serverURL` (and `authBaseUrl` for OAuth) explicitly when constructing the clients.
+  The SDK defaults to staging, so your deployed app talks to the Flynet staging API. To go live on production, point the clients at the production host — `serverURL: "https://api.blackbird.xyz/flynet/v1"` and `authBaseUrl: "https://api.blackbird.xyz/oauth"` — using the separate production credentials Blackbird issues on approval.
 </Note>
 
 ## What you shipped
@@ -1584,7 +1877,7 @@ A deployed Next.js app on the Flynet SDK — built by an agent that read the liv
 
 
 # Get started
-Source: https://flynet-dev-portal.mintlify.app/components/get-started
+Source: https://docs.flynet.org/components/get-started
 
 Adding Flynet components to your project. Coming soon.
 
@@ -1639,56 +1932,88 @@ copy-paste code:
 
 
 # Components
-Source: https://flynet-dev-portal.mintlify.app/components/index
+Source: https://docs.flynet.org/components/index
 
-Drop-in components for building on Flynet. Coming soon.
+Drop-in React components for Flynet — auth, member context, and discovery, built on the SDK.
 
 # Components
 
-A library of drop-in building blocks for the most common Flynet
-surfaces, so you can wire up auth, profile, discovery, and FLY
-payments without rebuilding the same UI every time.
+`@flynetdev/react` is a library of drop-in React components built on
+[`@flynetdev/core`](/concepts/typescript-client). Each one wires a Flynet
+surface — auth, profile, wallets, check-ins, discovery — to a themeable,
+accessible UI, so you don't rebuild the same screens every time.
 
-Every component reads from the endpoints documented in the
-[API reference](/api-reference/introduction) and follows the credential
-rules in [Authentication](/concepts/authentication). Secrets stay
-server-side; the access token stays in memory.
+```bash theme={null}
+npm install @flynetdev/react @flynetdev/core @tanstack/react-query
+```
 
-<Note>
-  Components are in active development. This page fills in as each one
-  lands. In the meantime, the [Cookbook](/recipes) recipes show the same
-  flows in plain code you can copy today.
-</Note>
+Import the theme once at your app root, then drop components in. New here? Start
+with [Get started](/components/get-started).
 
-## First to land
+```tsx theme={null}
+import "@flynetdev/react/styles.css";
+```
+
+## How they work
+
+* **Member components** read from a `FlynetProvider`. Give it a
+  `FlynetMemberClient` (built from a member's OAuth token) and they fetch
+  client-side.
+* **Discovery components** are presentational: fetch on the server with your API
+  key and pass the result as props. The key never reaches the browser.
+* Loading and error states are handled for you, and everything themes through
+  CSS variables you can override.
+
+## Auth
+
+| Component              | What it does                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------- |
+| `ConnectWithBlackbird` | The sign-in button that starts the OAuth flow. A link to your authorize route — no provider needed. |
+
+## Member components
+
+Wrap these in a `FlynetProvider` with a `FlynetMemberClient`.
+
+| Component      | Shows                                      | Scope                     |
+| -------------- | ------------------------------------------ | ------------------------- |
+| `WalletBadge`  | A member's FLY and USD balance             | `read:wallets`            |
+| `UserPassport` | A member's profile, level, and progress    | `read:profile`            |
+| `CheckInFeed`  | A member's recent check-ins                | `read:user_checkins`      |
+| `RecentVisits` | Recent (anonymized) check-ins at one venue | `read:checkins` (API key) |
+
+## Discovery components
+
+Presentational — pass data you fetched server-side with your API key.
+
+| Component         | Shows                        |
+| ----------------- | ---------------------------- |
+| `RestaurantList`  | A list of restaurants        |
+| `RestaurantCard`  | A single restaurant          |
+| `LocationCard`    | A single location            |
+| `OpenHoursBadge`  | A location's open hours      |
+| `NearbyLocations` | Locations sorted by distance |
+
+## Hooks
+
+Want the data without the UI? The same fetching is exposed as hooks that read
+from the `FlynetProvider`: `useWallet`, `useCheckIns`, `usePassport`,
+`useVenueCheckIns`.
+
+## Next
 
 <CardGroup>
-  <Card title="Connect with Blackbird" icon="right-to-bracket">
-    The OAuth entry point. One button that runs the full PKCE flow.
+  <Card title="Get started" icon="rocket" href="/components/get-started">
+    Install, theme, and render your first component.
   </Card>
 
-  <Card title="Wallet Badge" icon="wallet">
-    A member's FLY balance, read from `/users/me/wallets`.
-  </Card>
-
-  <Card title="Restaurant List" icon="utensils">
-    Browse the Discovery graph: restaurants and locations.
-  </Card>
-
-  <Card title="Pay with FLY" icon="credit-card">
-    A checkout button backed by Flynet Payment Intents.
+  <Card title="Build a member dining app" icon="utensils" href="/recipes/mains/member-dining-app">
+    Compose the components into a full flow.
   </Card>
 </CardGroup>
 
-## While you wait
-
-<Card title="Get started" icon="rocket" href="/components/get-started">
-  How components fit into a Flynet project.
-</Card>
-
 
 # API keys
-Source: https://flynet-dev-portal.mintlify.app/concepts/api-keys
+Source: https://docs.flynet.org/concepts/api-keys
 
 Server-to-server credential for restaurant and location discovery routes.
 
@@ -1702,23 +2027,15 @@ API keys are 40-character strings with a prefix that indicates how
 they were issued:
 
 ```text theme={null}
-bb_live_<40 chars>    Live integration credentials
-bb_test_<40 chars>    Test integration credentials
+fly_live_<40 chars>    Production credentials
+fly_test_<40 chars>    Staging / dev credentials
 ```
 
-The prefix is a labeling hint. The **environment binding is
-server-side**: your key is scoped to the DeveloperApp and
-environment it was minted under. Use the key you received in your
-onboarding email; the prefix it carries is the prefix you should
-expect.
-
-<Note>
-  **Tasting note** - Don't try to predict environment from prefix
-  alone. If you received a `bb_live_…` key with your staging credential
-  set, that's the right key for staging. If you received `bb_test_…`,
-  same. The server resolves which environment the key authorizes
-  based on internal state, not by reading the prefix at request time.
-</Note>
+`fly_live_` keys are production keys; `fly_test_` keys are staging/dev
+keys. The **environment binding is server-side**: your key is scoped to
+the DeveloperApp and environment it was minted under. Use the key you
+received in your onboarding email for the environment you were
+provisioned for.
 
 ## Header
 
@@ -1731,13 +2048,14 @@ curl -H "X-API-Key: $API_KEY" \
 
 ## What API keys cover
 
-| Route                                                              | API key                  | OAuth bearer                  |
-| ------------------------------------------------------------------ | ------------------------ | ----------------------------- |
-| `/restaurants` and `/restaurants/{id}`                             | Required                 | Returns `401 MISSING_API_KEY` |
-| `/restaurants/{id}/locations`                                      | Required                 | Returns `401 MISSING_API_KEY` |
-| `/locations` and `/locations/{id}`                                 | Required                 | Returns `401 MISSING_API_KEY` |
-| `/locations/{id}/open_hours`                                       | Required                 | Returns `401 MISSING_API_KEY` |
-| `/users/me/*`, `/check_ins*`, `/memberships`, `/payment_intents/*` | Returns 401 (empty body) | Required                      |
+| Route                                           | API key                                    | OAuth bearer             |
+| ----------------------------------------------- | ------------------------------------------ | ------------------------ |
+| `/restaurants` and `/restaurants/{id}`          | Required                                   | Returns 401 (empty body) |
+| `/restaurants/{id}/locations`                   | Required                                   | Returns 401 (empty body) |
+| `/locations` and `/locations/{id}`              | Required                                   | Returns 401 (empty body) |
+| `/locations/{id}/open_hours`                    | Required                                   | Returns 401 (empty body) |
+| `/check_ins` (venue feed) and `/check_ins/{id}` | Required (key minted with `read:checkins`) | Returns 401 (empty body) |
+| `/users/me/*`, `/payment_intents/*`             | Returns 401 (empty body)                   | Required                 |
 
 <Tip>
   **From the kitchen** - Discovery routes use the API key. Member-acting
@@ -1762,14 +2080,14 @@ stop working immediately on revocation.
 
 ## Mixing environments
 
-Don't reuse a key across environments. Your staging key authenticates
-against the staging API; your production key authenticates against
-the production API. They're issued separately and aren't substitutes
-for each other, regardless of the prefix you see.
+Don't reuse a key across environments. Your `fly_test_` staging key
+authenticates against the staging API; your `fly_live_` production key
+authenticates against the production API. They're issued separately and
+aren't substitutes for each other.
 
 
 # Authentication
-Source: https://flynet-dev-portal.mintlify.app/concepts/authentication
+Source: https://docs.flynet.org/concepts/authentication
 
 Two credentials, two patterns. Choose by who you are acting on behalf of.
 
@@ -1778,17 +2096,19 @@ you use depends on which routes you call.
 
 ## Pick by route
 
-| Route family                                        | Credential                                        |
-| --------------------------------------------------- | ------------------------------------------------- |
-| `/restaurants*` and `/locations*`                   | **API key** in `X-API-Key`                        |
-| `/users/me/*` (profile, status, wallets, check-ins) | **OAuth access token** in `Authorization: Bearer` |
-| `/check_ins*`                                       | **OAuth access token** in `Authorization: Bearer` |
-| `/memberships`                                      | **OAuth access token** in `Authorization: Bearer` |
-| `/payment_intents/*`                                | **OAuth access token** in `Authorization: Bearer` |
+| Route family                                                     | Credential                                              |
+| ---------------------------------------------------------------- | ------------------------------------------------------- |
+| `/restaurants*` and `/locations*`                                | **API key** in `X-API-Key`                              |
+| `/check_ins` (venue feed) and `/check_ins/{id}`                  | **API key** in `X-API-Key`, minted with `read:checkins` |
+| `/users/me/*` (profile, status, wallets, check-ins, memberships) | **OAuth access token** in `Authorization: Bearer`       |
+| `/payment_intents/*`                                             | **OAuth access token** in `Authorization: Bearer`       |
 
-The two credentials are not interchangeable. Sending an OAuth
-bearer to `/restaurants` returns `401 MISSING_API_KEY`. Sending
-an API key to `/check_ins` is rejected.
+The two credentials are not interchangeable. Sending an OAuth bearer to
+`/restaurants` (or the `/check_ins` venue feed) returns an empty-body `401`
+— no API key present. Sending an API key to `/users/me/check_ins` is
+rejected the same way: a member's own history always needs their token.
+Both return `401` with the reason in the `WWW-Authenticate` header, not
+JSON.
 
 <Tip>
   **From the kitchen** - Reach for the API key first when you are
@@ -1805,10 +2125,10 @@ acts **on behalf of the member who completed the flow**. Member
 routes resolve the subject from the token's `sub` claim, so
 `/users/me/*` returns that member's data, never another member's.
 
-| Credential             | Reads                                                                                                                | Writes                                     |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| **API key**            | Any restaurant, any location, any open hours in the environment it was issued for                                    | None at v1                                 |
-| **OAuth access token** | The authenticated member's own profile, status, wallets, tags, and check-ins; the check-in feed and memberships list | Payment Intents on behalf of your merchant |
+| Credential             | Reads                                                                                     | Writes                                     |
+| ---------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------ |
+| **API key**            | Any restaurant, any location, any open hours in the environment it was issued for         | None at v1                                 |
+| **OAuth access token** | The authenticated member's own profile, status, wallets, tags, check-ins, and memberships | Payment Intents on behalf of your merchant |
 
 ### OAuth scopes
 
@@ -1816,11 +2136,18 @@ Member routes are gated by scope. A token without the required
 scope returns **`403` with `WWW-Authenticate: Bearer error="insufficient_scope"`**:
 the route still exists; the token simply isn't authorized for it.
 
-| Scope           | Gates                                |
-| --------------- | ------------------------------------ |
-| `read:profile`  | `/users/me`, `/users/me/status`      |
-| `read:checkins` | `/check_ins*`, `/users/me/check_ins` |
-| `read:wallets`  | `/users/me/wallets`                  |
+| Scope                | Gates                           |
+| -------------------- | ------------------------------- |
+| `read:profile`       | `/users/me`, `/users/me/status` |
+| `read:user_checkins` | `/users/me/check_ins`           |
+| `read:wallets`       | `/users/me/wallets`             |
+| `read:tags`          | `/users/me/tags`                |
+| `read:memberships`   | `/users/me/memberships`         |
+
+These are OAuth (JWT) scopes, requested at `/authorize`. The
+`/check_ins` venue feed and `/check_ins/{id}` are **API-key** routes
+gated by the separate `read:checkins` scope minted on the key — not an
+OAuth scope. See [API keys](/concepts/api-keys).
 
 The member who completed the OAuth flow is the token's `sub` claim.
 See [Identify the authenticated member](/concepts/oauth#identify-the-authenticated-member).
@@ -1840,16 +2167,16 @@ email — a set scoped to **staging**. Production credentials are
 issued separately when you're approved for live traffic; see
 [Environments](/concepts/environments).
 
-| Field                                      | Example                                             | Used for                                                                                                                                                                   |
-| ------------------------------------------ | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `client_id`                                | `df1f9d01-…` (UUID)                                 | OAuth `/authorize` and `/token`. Public: safe to embed in browsers when paired with PKCE.                                                                                  |
-| `client_secret`                            | opaque \~40-char string                             | Backend `/token` exchange only. **Never expose to a browser.**                                                                                                             |
-| API key                                    | 40-char string with `bb_test_` or `bb_live_` prefix | Discovery routes (`/restaurants*`, `/locations*`). Send as `X-API-Key`. Backend only. The prefix is a labeling hint; env binding is server-side. Use the key you received. |
-| API key hint                               | last 4 chars (e.g. `mgK9`)                          | Reference a key in support tickets without revealing the full value.                                                                                                       |
-| Registered redirect URI(s)                 | e.g. `https://yourapp.com/oauth/callback`           | Where `/oauth/authorize` redirects after consent. Must match exactly. Multiple allowed.                                                                                    |
-| Approved scopes                            | e.g. `read:profile read:checkins read:wallets`      | The scope set your app may request. Each member route is gated by scope; a token missing the required scope returns `403 insufficient_scope`.                              |
-| `flynet_merchant_id` (if payments-enabled) | UUID                                                | Required body field on every `POST /payment_intents`. Per-partner, per-env.                                                                                                |
-| Allowlisted CORS origin(s)                 | e.g. `https://yourapp.com`                          | Browser origin(s) cleared to call the API directly. Only needed for direct browser → API.                                                                                  |
+| Field                                      | Example                                               | Used for                                                                                                                                                                        |
+| ------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `client_id`                                | `df1f9d01-…` (UUID)                                   | OAuth `/authorize` and `/token`. Public: safe to embed in browsers when paired with PKCE.                                                                                       |
+| `client_secret`                            | opaque \~40-char string                               | Backend `/token` exchange only. **Never expose to a browser.**                                                                                                                  |
+| API key                                    | 40-char string with `fly_test_` or `fly_live_` prefix | Discovery routes (`/restaurants*`, `/locations*`). Send as `X-API-Key`. Backend only. `fly_live_` is a production key, `fly_test_` a staging/dev key. Use the key you received. |
+| API key hint                               | last 4 chars (e.g. `mgK9`)                            | Reference a key in support tickets without revealing the full value.                                                                                                            |
+| Registered redirect URI(s)                 | e.g. `https://yourapp.com/oauth/callback`             | Where `/oauth/authorize` redirects after consent. Must match exactly. Multiple allowed.                                                                                         |
+| Approved scopes                            | e.g. `read:profile read:user_checkins read:wallets`   | The scope set your app may request. Each member route is gated by scope; a token missing the required scope returns `403 insufficient_scope`.                                   |
+| `flynet_merchant_id` (if payments-enabled) | UUID                                                  | Required body field on every `POST /payment_intents`. Per-partner, per-env.                                                                                                     |
+| Allowlisted CORS origin(s)                 | e.g. `https://yourapp.com`                            | Browser origin(s) cleared to call the API directly. Only needed for direct browser → API.                                                                                       |
 
 If anything is missing or wrong, reply to the onboarding email;
 fixes are fast pre-launch. See [OAuth](/concepts/oauth) for the
@@ -1868,14 +2195,15 @@ server-to-server use.
 The 401 envelope is determined by the **route family's gating
 filter**, not by which credential you happened to send.
 
-* **OAuth-protected routes** (`/users/*`, `/check_ins*`, `/payment_intents/*`)
-  return **HTTP 401 with an empty body** on missing or invalid bearer.
-  This also happens if you accidentally send an API key here: the
+* **OAuth-protected routes** (`/users/me/*`, `/payment_intents/*`)
+  return **HTTP 401 with an empty body** on missing, malformed, or expired
+  bearer. This also happens if you accidentally send an API key here: the
   OAuth filter doesn't see a bearer and rejects. Do not try to parse JSON.
-* **Discovery routes** (`/restaurants*`, `/locations*`) return **HTTP 401
-  with the `MISSING_API_KEY` envelope** if the API key is missing or
-  invalid. See [Pagination + errors](/concepts/pagination-errors) for
-  the exact shape.
+* **API-key routes** (`/restaurants*`, `/locations*`, the `/check_ins` venue feed, `/check_ins/{id}`)
+  return the **same empty-body 401** when the API key is missing. An *invalid*
+  (expired or revoked) key is the one case that returns a JSON body — envelope A
+  with `code: "invalid_api_key"`. See [Pagination + errors](/concepts/pagination-errors)
+  for the exact shapes.
 
 See [Debugging](/resources/debugging) for every observed `error_code`
 mapped to cause and fix.
@@ -1894,7 +2222,7 @@ mapped to cause and fix.
 
 
 # Data model
-Source: https://flynet-dev-portal.mintlify.app/concepts/data-model
+Source: https://docs.flynet.org/concepts/data-model
 
 Core resources in the launch Flynet API.
 
@@ -1913,11 +2241,18 @@ and payment intents through stable resource shapes.
 | Member status   | `user_status`    | Member standing / tier context. Fetchable via `/users/me/status`.                                                                                                                                             |
 | Wallet          | `user_wallet`    | Member wallet, either MEMBERSHIP or SPENDING. Auto-provisioned on first OAuth completion. Fetchable via `/users/me/wallets`.                                                                                  |
 | Tag             | `user_tag`       | Member metadata. Lowercase `type` values; `industry` identifies restaurant employees. Fetchable via `/users/me/tags`.                                                                                         |
-| Membership      | `membership`     | Member-to-restaurant membership record. Fetchable via `/memberships`.                                                                                                                                         |
+| Membership      | `membership`     | Member-to-restaurant membership record. Fetchable via `/users/me/memberships`.                                                                                                                                |
 | PaymentIntent   | `payment_intent` | Payment from member to merchant in FLY. Fetchable via `/payment_intents`.                                                                                                                                     |
 | Account Balance | (internal)       | FLY-denominated balance referenced by `payer_account_balance_id` / `payee_account_balance_id` on PaymentIntents. Not fetchable as a resource at launch; surfaces only as foreign-key fields on PaymentIntent. |
 
-Member-context resources live under `/users/me/*`: the subject is resolved from your OAuth access token's `sub` claim, so no UUID appears in the path. Routes: `/users/me`, `/users/me/status`, `/users/me/wallets`, `/users/me/tags`, `/users/me/check_ins`. Decode the `sub` claim yourself only if you need the member's UUID for your own state.
+Member-context resources live under `/users/me/*`: the subject is resolved from your OAuth access token's `sub` claim, so no UUID appears in the path. Routes: `/users/me`, `/users/me/status`, `/users/me/wallets`, `/users/me/tags`, `/users/me/check_ins`, `/users/me/memberships`. Decode the `sub` claim yourself only if you need the member's UUID for your own state.
+
+<Note>
+  **Tasting note** - The published [`@flynetdev/core`](/concepts/typescript-client)
+  SDK exposes these resources as typed methods: `FlynetDiscoveryClient` for
+  restaurants and locations, `FlynetMemberClient` for the `/users/me/*`
+  routes, check-ins, memberships, and Payment Intents.
+</Note>
 
 ## Relationships
 
@@ -1988,8 +2323,8 @@ object: branch on the status code, not on an empty payload.
 
 ## Memberships
 
-`/memberships` returns the authenticated member's membership
-records; each links a member to a restaurant. The collection is
+`/users/me/memberships` returns the authenticated member's membership
+records; each links the member to a restaurant. The collection is
 paginated like every other list route. It accepts a `restaurant`
 filter; an unrecognized filter param (such as `restaurant_id`) is
 silently ignored and returns the unfiltered set.
@@ -2009,7 +2344,7 @@ stringified integer in FLY wei. See [Money + tokens](/concepts/money-and-tokens)
 
 
 # Environments
-Source: https://flynet-dev-portal.mintlify.app/concepts/environments
+Source: https://docs.flynet.org/concepts/environments
 
 Staging vs production base URLs and the two-credential-set model.
 
@@ -2024,11 +2359,12 @@ Staging vs production base URLs and the two-credential-set model.
 
 ## Production
 
-|                    |                                       |
-| ------------------ | ------------------------------------- |
-| API base           | `https://api.blackbird.xyz/flynet/v1` |
-| OAuth base         | `https://api.blackbird.xyz/oauth`     |
-| JWT issuer (`iss`) | `https://api.blackbird.xyz`           |
+|                    |                                                                              |
+| ------------------ | ---------------------------------------------------------------------------- |
+| API base           | `https://api.blackbird.xyz/flynet/v1`                                        |
+| OAuth base         | `https://api.blackbird.xyz/oauth`                                            |
+| Consent host       | `https://passport.flynet.org` (reached via redirect from `/oauth/authorize`) |
+| JWT issuer (`iss`) | `https://api.blackbird.xyz`                                                  |
 
 <Warning>
   **Chef's warning** - Production access is gated by partner approval.
@@ -2066,16 +2402,16 @@ if applicable, `flynet_merchant_id`.
 | API base    | `api.staging.blackbird.xyz`    | `api.blackbird.xyz`           |
 | Credentials | Issued at approval             | Issued at production sign-off |
 
-The API key prefix you receive (`bb_test_…` or `bb_live_…`) is a
-labeling hint; the actual environment binding is server-side via
-the DeveloperApp that minted the key. Use the key you received
-against the environment you were provisioned for. Don't try to
-swap keys across environments; they're issued separately and
+The API key prefix tells you the environment: `fly_test_` is a
+staging/dev key, `fly_live_` is a production key. The binding is also
+enforced server-side via the DeveloperApp that minted the key. Use the
+key you received against the environment you were provisioned for. Don't
+try to swap keys across environments; they're issued separately and
 authenticate against their own surface.
 
 
 # Money + tokens
-Source: https://flynet-dev-portal.mintlify.app/concepts/money-and-tokens
+Source: https://docs.flynet.org/concepts/money-and-tokens
 
 How Flynet represents amounts on the wire.
 
@@ -2097,6 +2433,24 @@ All amounts on Flynet use a consistent wire shape:
 The string format protects precision. Large FLY amounts exceed
 JavaScript's `Number.MAX_SAFE_INTEGER`. Treat `value` as a string
 and convert with `BigInt` when you need to do math.
+
+## Formatting with the SDK
+
+The published [`@flynetdev/core`](/concepts/typescript-client) SDK ships
+`formatFly` and `formatUsdCents`, the recommended way to turn wire values
+into display strings. Both are exact and string-based, with no precision
+loss.
+
+```ts theme={null}
+import { formatFly, formatUsdCents } from "@flynetdev/core";
+
+formatFly("25000000000000000001"); // "25.000000000000000001"
+formatFly("1000000000000000000");  // "1"
+formatUsdCents(1099);              // "10.99"
+```
+
+If you're not using the SDK, the hand-rolled equivalents below produce the
+same results.
 
 <Warning>
   **Chef's warning** - `wei / 1e18` and `Number(BigInt(wei) / BigInt(1e18))` both lose fractional FLY. The first silently rounds at \~16 significant digits; the second integer-truncates the fractional part entirely. Use one of the two correct approaches below.
@@ -2128,10 +2482,25 @@ formatFly("1");                    // "0.000000000000000001"
 
 Use the exact formatter for anything you'd round-trip back to wei, compare to thresholds, or sum across rows. Use the quick formatter only for fire-and-forget UI strings.
 
+## USD amounts
+
+Where the API expresses a USD value, it uses an **integer number of
+cents**, not the `{ value, currency }` wire shape and not a floating-point
+dollar amount. `1099` means `$10.99`. Integer cents avoid the rounding
+errors of binary floating point, the same reasoning behind stringified FLY
+wei. Format with `formatUsdCents` from the SDK:
+
+```ts theme={null}
+import { formatUsdCents } from "@flynetdev/core";
+
+formatUsdCents(1099); // "10.99"
+formatUsdCents(500);  // "5.00"
+```
+
 ## Currency
 
-v1 supports `FLY` only. Other currency values are rejected with
-HTTP 400 on routes that accept Money input.
+Payment Intents are `FLY` only in v1. Other currency values are rejected
+with HTTP 400 on routes that accept Money input.
 
 ## Common conversions
 
@@ -2160,13 +2529,21 @@ When sending Money to Flynet, use the same shape:
 
 
 # OAuth
-Source: https://flynet-dev-portal.mintlify.app/concepts/oauth
+Source: https://docs.flynet.org/concepts/oauth
 
 OAuth 2.0 + PKCE for acting on behalf of Blackbird members. About 10 minutes.
 
 Flynet's OAuth implementation follows the [Token-Mediating Backend](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-browser-based-apps#name-token-mediating-backend)
 variant of OAuth 2.0 + PKCE. Your backend holds the `client_secret`
 and refresh token. The browser only sees a short-lived access token.
+
+<Note>
+  **Tasting note** - The published [`@flynetdev/core`](/concepts/typescript-client)
+  SDK implements this flow for you: `FlynetOAuth` handles PKCE generation,
+  the code exchange, and refresh-token rotation, and `FlynetMemberClient`
+  carries the resulting access token on member routes. The walkthrough below
+  shows the raw HTTP if you'd rather wire it by hand.
+</Note>
 
 ## Prerequisites
 
@@ -2175,7 +2552,7 @@ After your app is approved, Blackbird sends you:
 * `client_id` - embed in your frontend
 * `client_secret` - backend-only
 * A registered redirect URI - your callback URL
-* Your allowed scopes - e.g. `read:profile`, `read:checkins`, `read:wallets`
+* Your allowed scopes - e.g. `read:profile`, `read:user_checkins`, `read:wallets`
 
 <Warning>
   **Chef's warning** - This flow assumes you have a backend that can hold
@@ -2186,12 +2563,35 @@ After your app is approved, Blackbird sends you:
 
 ## Environment
 
-For staging:
+Staging:
 
 ```bash theme={null}
 AUTH_BASE_URL=https://api.staging.blackbird.xyz/oauth
 API_BASE_URL=https://api.staging.blackbird.xyz/flynet/v1
 ```
+
+Production (separate credentials, issued when you're approved for live traffic):
+
+```bash theme={null}
+AUTH_BASE_URL=https://api.blackbird.xyz/oauth
+API_BASE_URL=https://api.blackbird.xyz/flynet/v1
+```
+
+<Note>
+  **Tasting note — local testing.** Your `redirect_uri` must be a public,
+  allowlisted URL, and the allowlist is an exact match. `localhost` usually
+  won't be registered, so expose your callback with a tunnel like
+  [ngrok](https://ngrok.com) and register that exact URL:
+
+  ```bash theme={null}
+  ngrok http 3000   # → https://your-subdomain.ngrok-free.app
+  REDIRECT_URI=https://your-subdomain.ngrok-free.app/callback
+  ```
+
+  Use a **reserved** ngrok domain (free tier includes one) so the URL is
+  stable — because the allowlist is exact, a rotating hostname means
+  re-registering with Blackbird every session.
+</Note>
 
 ## The flow
 
@@ -2226,7 +2626,7 @@ async function login() {
     response_type: 'code',
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
-    scope: 'read:profile read:checkins',
+    scope: 'read:profile read:user_checkins',
     state,
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
@@ -2373,7 +2773,7 @@ async function callApi(path, options = {}) {
   A call to `/users/me/wallets` returns the authenticated member's
   wallets: there's no member UUID in the path, and you can't read
   another member's data with the token. Each member route is gated by
-  scope (`read:wallets`, `read:checkins`, `read:profile`); a token
+  scope (`read:wallets`, `read:user_checkins`, `read:profile`); a token
   missing the required scope returns `403 insufficient_scope`. Never
   expose the token client-side beyond the in-memory pattern in
   [Security notes](#security-notes).
@@ -2476,8 +2876,10 @@ user UUID; it matches the `id` returned by `/users/me`.
   `localStorage` or `sessionStorage`.
 * Store the refresh token in an HttpOnly cookie scoped to
   `/api/oauth/refresh`.
-* Blackbird allowlists your registered redirect URI's origin when
-  your app is provisioned.
+* Blackbird allowlists your registered redirect URI as an **exact
+  match** — scheme, host, port, and path, character for character. A
+  trailing slash or a different path is rejected. Register every callback
+  URL you'll use (including a local-testing one; see Environment).
 * **JWT issuer claim.** Tokens carry `iss: https://api-staging.blackbird.xyz`
   (staging). Note the dash between `api` and `staging`. The API host
   itself uses a dot: `api.staging.blackbird.xyz`. Both are valid; the
@@ -2499,7 +2901,7 @@ user UUID; it matches the `id` returned by `/users/me`.
   "token_type": "Bearer",
   "expires_in": 3600,
   "refresh_token": "<refresh>",
-  "scope": "read:profile read:checkins"
+  "scope": "read:profile read:user_checkins"
 }
 ```
 
@@ -2513,9 +2915,9 @@ user UUID; it matches the `id` returned by `/users/me`.
 
 
 # Pagination + errors
-Source: https://flynet-dev-portal.mintlify.app/concepts/pagination-errors
+Source: https://docs.flynet.org/concepts/pagination-errors
 
-List pagination, required filters, and observed error response shapes.
+List pagination, optional filters, and observed error response shapes.
 
 ## Pagination
 
@@ -2549,7 +2951,7 @@ status code first, then read the matching shape below.
 
 ### Envelope A - modern
 
-Returned by `/check_ins`, `/users/me/*`, `/memberships`, and
+Returned by `/check_ins`, `/users/me/*`, and
 `/payment_intents/*` on `400` validation and `404 resource_not_found`
 errors. Note this envelope is **status-agnostic**: the same shape
 appears on both 400 and 404, so branch on the HTTP status, not the
@@ -2566,16 +2968,20 @@ envelope.
 }
 ```
 
-### Envelope B - Discovery 401
+### Invalid API key - 401 (envelope A)
 
 Returned by `/restaurants*` and `/locations*` when the `X-API-Key`
-header is missing or invalid.
+header carries an expired or revoked key. (A **missing** key returns an
+empty-body 401 instead — see below.)
 
 ```json theme={null}
 {
-  "status": 401,
-  "message": "API key is required. Include your key in the X-API-Key header.",
-  "error_code": "MISSING_API_KEY"
+  "error": {
+    "type": "authentication_error",
+    "code": "invalid_api_key",
+    "message": "Invalid or revoked API key.",
+    "param": null
+  }
 }
 ```
 
@@ -2597,10 +3003,16 @@ deprecated routes, or version-prefix mistakes.
 
 ### 401 with empty body
 
-Routes protected by OAuth bearer (`/users/me/*`, `/check_ins*`,
-`/memberships`, `/payment_intents/*`) return **HTTP 401 with an empty
-body** and a `WWW-Authenticate: Bearer` header if the bearer is
-missing or invalid. Do not try to parse JSON on these 401s.
+A **missing credential returns HTTP 401 with an empty body** and a
+`WWW-Authenticate: Bearer` header — on **both** route families. Member
+routes (`/users/me/*`, `/payment_intents/*`) return it when the bearer
+is missing, malformed, or expired (the header carries
+`error="invalid_token"` for a bad JWT);
+Discovery routes (`/restaurants*`, `/locations*`, the `/check_ins`
+venue feed including `/check_ins/{id}`) return it when the `X-API-Key`
+header is absent. Do not try to parse JSON on these 401s —
+read the `WWW-Authenticate` header. (An *invalid* API key is the one
+exception that returns a JSON body; see above.)
 
 ### 403 insufficient scope
 
@@ -2613,8 +3025,9 @@ from the empty-body 401 (missing/invalid token) and from a 404
 
 ## Filtering `GET /check_ins`
 
-`GET /check_ins` accepts optional filters
-(`[user, location, restaurant, created_after, created_before]`), but
+`GET /check_ins` is an anonymized venue feed (no member identity) and
+accepts optional filters
+(`[restaurant, location, created_after, created_before]`), but
 a bare `GET /check_ins` with no filter is valid and returns the full
 paginated set. (Earlier launch builds required at least one filter;
 that requirement was dropped.)
@@ -2628,27 +3041,59 @@ that requirement was dropped.)
 ## Unknown query parameters
 
 Unknown query parameters are silently ignored. A typo in a filter
-name, such as `?users=...` instead of `?user=...`, is treated as if
-the filter was not supplied, so `/check_ins` returns the unfiltered
-set rather than an error, and you get more rows than you expected
-rather than a 400.
+name, such as `?restaurants=...` instead of `?restaurant=...`, is
+treated as if the filter was not supplied, so `/check_ins` returns the
+unfiltered set rather than an error, and you get more rows than you
+expected rather than a 400.
 
 ## Error code reference
 
-| Code                        | Meaning                                                                                                        |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `invalid_request_error`     | Request body or parameters are malformed.                                                                      |
-| `invalid_parameter`         | A specific parameter is invalid or missing.                                                                    |
-| `resource_not_found`        | The resource does not exist.                                                                                   |
-| `payment0030`               | Member has insufficient FLY for Payment Intent confirm.                                                        |
-| `paymentIntent0003`         | The Payment Intent is not in a state that allows this operation.                                               |
-| `MISSING_API_KEY`           | The `X-API-Key` header is missing on a Discovery route.                                                        |
-| `insufficient_scope`        | The bearer token lacks the OAuth scope the member route requires (HTTP 403, in the `WWW-Authenticate` header). |
-| `EndpointNotFoundException` | The route does not exist. Check the path and version prefix.                                                   |
+| Code                        | Meaning                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `invalid_request_error`     | Request body or parameters are malformed.                                                                        |
+| `invalid_parameter`         | A specific parameter is invalid or missing.                                                                      |
+| `resource_not_found`        | The resource does not exist.                                                                                     |
+| `payment0030`               | Member has insufficient FLY for Payment Intent confirm.                                                          |
+| `paymentIntent0003`         | The Payment Intent is not in a state that allows this operation.                                                 |
+| `invalid_api_key`           | The `X-API-Key` is expired or revoked (HTTP 401, envelope A). A *missing* key returns an empty-body 401 instead. |
+| `insufficient_scope`        | The bearer token lacks the OAuth scope the member route requires (HTTP 403, in the `WWW-Authenticate` header).   |
+| `EndpointNotFoundException` | The route does not exist. Check the path and version prefix.                                                     |
+
+## With the SDK
+
+The published [`@flynetdev/core`](/concepts/typescript-client) SDK
+normalizes every envelope above into a single `FlynetError`. Instead of
+branching on HTTP status and matching envelope shapes, branch on
+`error.kind`:
+
+```ts theme={null}
+import { FlynetError } from "@flynetdev/core";
+
+try {
+  await member.listCheckIns();
+} catch (err) {
+  if (err instanceof FlynetError) {
+    switch (err.kind) {
+      case "insufficient_scope": // 403, token missing the required scope
+      case "unauthorized":       // empty-body 401, missing/invalid bearer
+      case "rate_limited":       // 429
+      case "network":            // transport failure, no HTTP response
+        // handle...
+    }
+  }
+}
+```
+
+`kind` is one of `unauthorized`, `insufficient_scope`, `forbidden`,
+`not_found`, `validation`, `rate_limited`, `server`, `network`, or
+`unknown`. The SDK maps the raw responses for you: the empty-body 401 →
+`unauthorized`, the 403 `insufficient_scope` → `insufficient_scope`, a 429
+→ `rate_limited`, Envelope A `400` validation → `validation`, and a
+failed request that never reached the API → `network`.
 
 
 # Payments
-Source: https://flynet-dev-portal.mintlify.app/concepts/payments
+Source: https://docs.flynet.org/concepts/payments
 
 Accept payments from Blackbird members in FLY. Modeled on Stripe Payment Intents.
 
@@ -2808,7 +3253,7 @@ checkout surface are on the roadmap.
 
 
 # TypeScript client
-Source: https://flynet-dev-portal.mintlify.app/concepts/typescript-client
+Source: https://docs.flynet.org/concepts/typescript-client
 
 A single typed file that handles both auth schemes and the API's error envelopes.
 
@@ -2989,7 +3434,7 @@ API, file an issue via [Support](/resources/support).
 
 
 # Getting started
-Source: https://flynet-dev-portal.mintlify.app/getting-started
+Source: https://docs.flynet.org/getting-started
 
 From sandbox access to your first integration.
 
@@ -3073,7 +3518,7 @@ through the steps below.
 
 
 # About Blackbird
-Source: https://flynet-dev-portal.mintlify.app/index
+Source: https://docs.flynet.org/index
 
 The membership network for restaurant lovers, and the API to build on it.
 
@@ -3089,7 +3534,19 @@ The **Flynet API** gives you read access to Blackbird's dining network and the r
 
 <CardGroup>
   <Card title="Quickstart" icon="bolt" href="/quickstart">
-    Three authenticated calls, both credential schemes confirmed.
+    Install the SDK or make three raw authenticated calls.
+  </Card>
+
+  <Card title="Components" icon="puzzle-piece" href="/components">
+    `@flynetdev/react`: 10 drop-in components for live network data.
+  </Card>
+
+  <Card title="TypeScript client" icon="code" href="/concepts/typescript-client">
+    `@flynetdev/core`: typed clients, OAuth, errors, money helpers.
+  </Card>
+
+  <Card title="Build with AI" icon="robot" href="/build-with-ai/overview">
+    The Flynet MCP server and agent skill for AI-assisted builds.
   </Card>
 
   <Card title="About Flynet" icon="network-wired" href="/what-is-flynet">
@@ -3123,7 +3580,7 @@ The **Flynet API** gives you read access to Blackbird's dining network and the r
 
 
 # Quickstart
-Source: https://flynet-dev-portal.mintlify.app/quickstart
+Source: https://docs.flynet.org/quickstart
 
 From zero to three authenticated calls in five minutes.
 
@@ -3136,11 +3593,11 @@ From zero to three authenticated calls in five minutes.
 
 ## First course: set credentials
 
-Two credentials are not interchangeable. Discovery routes (`/restaurants*`, `/locations*`) take the API key. Member-scoped routes (`/users/me/*`, `/check_ins*`, `/memberships`, `/payment_intents*`) take an OAuth access token. See [OAuth](/concepts/oauth) for the full flow and [API keys](/concepts/api-keys) for the server-to-server side.
+Two credentials are not interchangeable. API-key routes (`/restaurants*`, `/locations*`, and the `/check_ins` venue feed including `/check_ins/{id}`) take the API key. Member-scoped routes (`/users/me/*`, `/payment_intents*`) take an OAuth access token. See [OAuth](/concepts/oauth) for the full flow and [API keys](/concepts/api-keys) for the server-to-server side.
 
 ```bash theme={null}
 export API_BASE_URL="https://api.staging.blackbird.xyz/flynet/v1"
-export API_KEY="bb_test_..."        # from your onboarding email; paste exactly as received
+export API_KEY="fly_test_..."       # from your onboarding email; paste exactly as received
 export ACCESS_TOKEN="..."           # from /oauth/token; see OAuth concept
 ```
 
@@ -3177,7 +3634,7 @@ Expected (abbreviated, first restaurant only):
 
 `total_count` shifts as the seed list grows. Treat the exact number as illustrative.
 
-A `401` from this route is JSON: `{"status":401,"message":"...","error_code":"MISSING_API_KEY"}`, not the empty-body 401 that OAuth routes return. Discovery routes reject OAuth bearer tokens.
+A **missing** key returns an empty-body `401` with a `WWW-Authenticate: Bearer` header (reason in the header, not JSON). An **invalid** key returns a JSON `401` with `code: "invalid_api_key"`. Discovery routes reject OAuth bearer tokens either way.
 
 ## Main course: fetch your wallets
 
@@ -3203,7 +3660,7 @@ This route needs the `read:wallets` scope. Wrong scope returns `403` with `WWW-A
 
 ## Final course: your check-in history
 
-Your own visit history, subject resolved from the JWT. Each row embeds the full `location`, `restaurant`, and `neighborhood`, plus `visit_number` and timestamps: one call powers a complete feed row.
+Your own visit history, subject resolved from the JWT. Each row embeds the full `location`, `restaurant`, and `neighborhood`, plus timestamps: one call powers a complete feed row.
 
 ```bash theme={null}
 curl -sS "$API_BASE_URL/users/me/check_ins?page=0&page_size=10" \
@@ -3218,7 +3675,7 @@ Expected (abbreviated, one row):
     {
       "id": "{uuid}",
       "object": "check_in",
-      "visit_number": 47,
+      "blackbird_pay_enabled": true,
       "created_at": "2026-04-17T14:31:17Z",
       "ended_at": "2026-04-17T16:02:40Z",
       "location": { "object": "location", "name": "Anton's West Village", "restaurant": { "name": "Anton's" }, "neighborhood": { "name": "West Village" } }
@@ -3228,14 +3685,14 @@ Expected (abbreviated, one row):
 }
 ```
 
-This route needs the `read:checkins` scope. Wrong scope returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope"`: the route still exists, your token just isn't authorized for it.
+This route needs the `read:user_checkins` scope. Wrong scope returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope"`: the route still exists, your token just isn't authorized for it.
 
 <Note>
   **Tasting note** - Pagination is zero-indexed. Start with `page=0`. Timestamps are ISO 8601 strings.
 </Note>
 
 <Note>
-  **Tasting note** - The collection route `/check_ins` accepts optional filters (`[user, location, restaurant, created_after, created_before]`), but a bare `GET /check_ins` is now valid and returns the full set. Unknown query params are silently ignored: a typo like `users=` instead of `user=` is treated as no filter supplied. `created_after` / `created_before` accept ISO 8601 only.
+  **Tasting note** - The collection route `/check_ins` is an anonymized venue feed (no member identity) and accepts optional filters (`[restaurant, location, created_after, created_before]`), but a bare `GET /check_ins` is valid and returns the full set. Unknown query params are silently ignored: a typo like `restaurants=` instead of `restaurant=` is treated as no filter supplied. `created_after` / `created_before` accept ISO 8601 only.
 </Note>
 
 ## Staging fixtures
@@ -3276,7 +3733,7 @@ See [Debugging](/resources/debugging): every observed `error_code` mapped to roo
 
 
 # Hello API Key
-Source: https://flynet-dev-portal.mintlify.app/recipes/appetizers/hello-api-key
+Source: https://docs.flynet.org/recipes/appetizers/hello-api-key
 
 Confirm your API key works against a Discovery route.
 
@@ -3329,7 +3786,7 @@ A missing or invalid key returns `401` with a JSON envelope, different from the 
 
 
 # Hello OAuth
-Source: https://flynet-dev-portal.mintlify.app/recipes/appetizers/hello-oauth
+Source: https://docs.flynet.org/recipes/appetizers/hello-oauth
 
 Confirm your OAuth access token works against an OAuth-protected route.
 
@@ -3342,9 +3799,34 @@ Confirm your OAuth access token works against an OAuth-protected route.
 
 * `GET /flynet/v1/users/me/wallets` with `Authorization: Bearer <access_token>`
 
-The subject is resolved from your token, with no member ID in the path.
+The subject is resolved from your token, with no member ID in the path. The
+token itself comes from the OAuth + PKCE flow — `FlynetOAuth.exchangeCode()`
+returns it. See [OAuth](/concepts/oauth) for the full handshake.
 
-## Code
+## With the SDK
+
+`FlynetMemberClient` carries the bearer token and normalizes auth failures into
+a typed `FlynetError` — no header parsing.
+
+```typescript theme={null}
+import { FlynetMemberClient, FlynetError } from "@flynetdev/core";
+
+const member = new FlynetMemberClient({ accessToken: process.env.ACCESS_TOKEN! });
+
+try {
+  const { wallets } = await member.listWallets();
+  console.log(wallets);
+} catch (err) {
+  if (err instanceof FlynetError) {
+    // "unauthorized" = bad/expired token; "insufficient_scope" = missing read:wallets
+    console.log(err.kind);
+  } else throw err;
+}
+```
+
+## Under the hood
+
+The raw request, to see what an OAuth 401/403 looks like on the wire:
 
 ```typescript theme={null}
 const res = await fetch(
@@ -3380,7 +3862,7 @@ not in JSON. A `403` means your token is valid but lacks the
 
 
 # Fetch a restaurant list
-Source: https://flynet-dev-portal.mintlify.app/recipes/appetizers/restaurant-list
+Source: https://docs.flynet.org/recipes/appetizers/restaurant-list
 
 One paginated GET to populate a picker or first screen.
 
@@ -3419,7 +3901,7 @@ curl -sS "https://api.staging.blackbird.xyz/flynet/v1/restaurants?page=0&page_si
 
 
 # Cookbook
-Source: https://flynet-dev-portal.mintlify.app/recipes/index
+Source: https://docs.flynet.org/recipes/index
 
 The build kit for Flynet. Drop-in components and working recipes.
 
@@ -3451,7 +3933,7 @@ New to the kitchen? Start with [Fetch a restaurant list](/recipes/appetizers/res
 
 
 # Check-in feed
-Source: https://flynet-dev-portal.mintlify.app/recipes/mains/check-in-feed
+Source: https://docs.flynet.org/recipes/mains/check-in-feed
 
 Filtered timeline with embedded venue context.
 
@@ -3460,15 +3942,42 @@ Filtered timeline with embedded venue context.
 **Goal:** Render an activity feed from one filtered call.\
 **Prep time:** \~5 minutes
 
+## Off the shelf
+
+The [`CheckInFeed` component](/components) from `@flynetdev/react` renders a member's recent check-ins for you. Wrap it in a `FlynetProvider` with a `FlynetMemberClient` built from the member's OAuth token, and it fetches client-side under the `read:user_checkins` scope.
+
+```tsx app/feed.tsx theme={null}
+"use client";
+import { FlynetMemberClient } from "@flynetdev/core";
+import { FlynetProvider, CheckInFeed } from "@flynetdev/react";
+
+export function Feed({ accessToken }: { accessToken: string }) {
+  const member = new FlynetMemberClient({ accessToken });
+  return (
+    <FlynetProvider member={member}>
+      <CheckInFeed />
+    </FlynetProvider>
+  );
+}
+```
+
+For an anonymized feed of recent check-ins at one venue, reach for [`RecentVisits`](/components) instead.
+
+## From scratch
+
+To filter the global feed yourself, or build the row markup by hand, it's one call.
+
 ## What you will use
 
 * `GET /flynet/v1/check_ins`
 
 ## Code
 
+The venue feed is **API-key** auth (server-side; the key needs `read:checkins`):
+
 ```bash theme={null}
 curl -sS "https://api.staging.blackbird.xyz/flynet/v1/check_ins?restaurant={uuid}&sort_order=desc&page_size=25" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+  -H "X-API-Key: $API_KEY"
 ```
 
 ```typescript theme={null}
@@ -3480,18 +3989,17 @@ const params = new URLSearchParams({
 
 const res = await fetch(
   `https://api.staging.blackbird.xyz/flynet/v1/check_ins?${params}`,
-  { headers: { Authorization: `Bearer ${process.env.ACCESS_TOKEN!}` } }
+  { headers: { "X-API-Key": process.env.API_KEY! } }
 );
 
 const data = await res.json();
 const first = data.check_ins[0];
-console.log(first?.location.restaurant.name, first?.visit_number, first?.created_at);
+console.log(first?.location.restaurant.name, first?.created_at);
 ```
 
 Each row embeds `location` with `restaurant` and `neighborhood`, plus
-`visit_number` and timestamps, so one call powers a complete feed row.
-Check-ins carry no member identity — render venue, visit count, and
-time, not a name.
+timestamps, so one call powers a complete feed row.
+Check-ins carry no member identity — render venue and time, not a name.
 
 <Note>
   **Tasting note** - To show a member their *own* visit history, use
@@ -3504,32 +4012,33 @@ time, not a name.
   explicitly in UI.
 </Note>
 
-## Alternative: filter the global feed
+## Narrow by venue or time
 
-If you need check-ins across multiple users or filtered by
-restaurant, location, or time, use the same global endpoint:
+`/check_ins` is an anonymized venue feed. Narrow it to one brand or one
+location, optionally bounded by time:
 
 ```bash theme={null}
 curl "https://api.staging.blackbird.xyz/flynet/v1/check_ins?restaurant={uuid}&created_after=2026-04-01T00:00:00Z&page_size=25" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+  -H "X-API-Key: $API_KEY"
 ```
 
 <Note>
   **Tasting note** - `/check_ins` filters are optional
-  (`[user, location, restaurant, created_after, created_before]`), and a
-  bare unfiltered list now returns the full paginated set rather than a
+  (`[restaurant, location, created_after, created_before]`), and a
+  bare unfiltered list returns the full paginated set rather than a
   400\. Always page deliberately when you omit filters. See
   [the reference](/api-reference/check-ins/list) for the full filter matrix.
 </Note>
 
-Combinations AND together: `?user={uuid}&restaurant={uuid}&created_after=2026-04-01T00:00:00Z`
-returns only that user's check-ins at that restaurant since the cutoff.
+Combinations AND together: `?restaurant={uuid}&created_after=2026-04-01T00:00:00Z`
+returns that brand's check-ins since the cutoff — the basis for a venue
+heatmap.
 
 **Next:** [First payment](/recipes/mains/first-payment) - accept FLY from a member.
 
 
 # First payment
-Source: https://flynet-dev-portal.mintlify.app/recipes/mains/first-payment
+Source: https://docs.flynet.org/recipes/mains/first-payment
 
 Create, confirm, and verify a Payment Intent end-to-end. About 15 minutes.
 
@@ -3710,7 +4219,7 @@ The 1 FLY returns to the customer. Status becomes `refunded`. Refunds are full-o
 
 
 # Wallet badge
-Source: https://flynet-dev-portal.mintlify.app/recipes/mains/flylevel-badge
+Source: https://docs.flynet.org/recipes/mains/flylevel-badge
 
 Show a member's Flynet wallets in profile chrome.
 
@@ -3766,7 +4275,7 @@ check-ins with member context.
 
 
 # Member dining app
-Source: https://flynet-dev-portal.mintlify.app/recipes/mains/member-dining-app
+Source: https://docs.flynet.org/recipes/mains/member-dining-app
 
 Connect with Blackbird, list restaurants, and show a member passport — composed from the SDK.
 
@@ -3801,7 +4310,7 @@ const oauth = new FlynetOAuth({
   clientSecret: process.env.CLIENT_SECRET!,
   redirectUri: process.env.REDIRECT_URI!,
   audience: process.env.AUDIENCE!,
-  scopes: ["read:profile", "read:checkins", "read:wallets"],
+  scopes: ["read:profile", "read:user_checkins", "read:wallets"],
 });
 
 export async function GET() {
@@ -3886,7 +4395,7 @@ export function Passport({ accessToken }: { accessToken: string }) {
 
 
 # Restaurant explorer
-Source: https://flynet-dev-portal.mintlify.app/recipes/mains/restaurant-explorer
+Source: https://docs.flynet.org/recipes/mains/restaurant-explorer
 
 Brands, locations, and open hours for list or map UIs.
 
@@ -3895,13 +4404,62 @@ Brands, locations, and open hours for list or map UIs.
 **Goal:** Power a discovery list or map screen from three read calls: brand → locations → hours.\
 **Prep time:** \~10 minutes
 
+## Off the shelf
+
+The fastest path is `FlynetDiscoveryClient` from `@flynetdev/core` for the reads,
+plus the discovery components from `@flynetdev/react` for the UI:
+[`NearbyLocations`](/components), [`LocationCard`](/components), and
+[`OpenHoursBadge`](/components). Discovery components are presentational — fetch
+on the server with your API key and hand the result down as props, so the key
+never reaches the browser.
+
+```tsx app/explore.tsx theme={null}
+import { FlynetDiscoveryClient, type models } from "@flynetdev/core";
+import { NearbyLocations, OpenHoursBadge } from "@flynetdev/react";
+
+export default async function Explore() {
+  const discovery = new FlynetDiscoveryClient({ apiKey: process.env.API_KEY! });
+
+  const { restaurants } = await discovery.restaurants.listRestaurants({ pageSize: 50 });
+
+  // Find a brand that actually has at least one location.
+  let locations: models.Location[] = [];
+  for (const r of restaurants) {
+    const res = await discovery.restaurants.listRestaurantLocations({ id: r.id, pageSize: 50 });
+    if (res.locations.length > 0) {
+      locations = res.locations;
+      break;
+    }
+  }
+
+  const openHours = locations[0]
+    ? (await discovery.locations.listLocationOpenHours({ id: locations[0].id })).openHours
+    : [];
+
+  return (
+    <>
+      <NearbyLocations locations={locations} />
+      {locations[0] && <OpenHoursBadge openHours={openHours} timeZone={locations[0].timeZone} />}
+    </>
+  );
+}
+```
+
+`NearbyLocations` sorts venues by distance and renders each as a `LocationCard`;
+`OpenHoursBadge` computes "open now" from the weekly hours and the location's
+IANA time zone. The same client-side filtering caveat below still applies — the
+components don't change what the server returns.
+
+## From scratch
+
+To see the three reads underneath, or work without React, call them directly.
+All three are Discovery routes: they take the API key, not an OAuth bearer.
+
 ## What you'll use
 
 * `GET /flynet/v1/restaurants` with `X-API-Key`
 * `GET /flynet/v1/restaurants/{id}/locations` with `X-API-Key`
 * `GET /flynet/v1/locations/{id}/open_hours` with `X-API-Key`
-
-All three are Discovery routes: they take the API key, not an OAuth bearer.
 
 ## Code
 
@@ -3965,52 +4523,91 @@ curl -sS "https://api.staging.blackbird.xyz/flynet/v1/restaurants?page=0&page_si
 
 
 # User passport
-Source: https://flynet-dev-portal.mintlify.app/recipes/mains/user-passport
+Source: https://docs.flynet.org/recipes/mains/user-passport
 
-Places I have been - check-ins plus restaurant cards.
+Who a member is plus where they've been — profile and visit history in one view.
 
 # User passport
 
-**Goal:** Combine visit history with venue detail for a passport-style
-view of where a member has been.\
+**Goal:** Build a passport-style view that pairs a member's identity and standing
+with the places they've checked in.\
 **Prep time:** \~10 minutes
+
+A passport has two halves: who the member is (profile, level, progress) and
+where they've been (their check-in history). Both read from the member's OAuth
+token.
+
+## Off the shelf
+
+Two components from `@flynetdev/react` cover both halves. `UserPassport` renders
+profile, level, and progress; `CheckInFeed` renders the member's check-ins,
+newest first. Wrap them in one `FlynetProvider` with a `FlynetMemberClient`
+built from the member's OAuth token — they fetch client-side under the
+`read:profile` and `read:user_checkins` scopes.
+
+```tsx app/passport.tsx theme={null}
+"use client";
+import { FlynetMemberClient } from "@flynetdev/core";
+import { FlynetProvider, UserPassport, CheckInFeed } from "@flynetdev/react";
+
+export function Passport({ accessToken }: { accessToken: string }) {
+  const member = new FlynetMemberClient({ accessToken });
+  return (
+    <FlynetProvider member={member}>
+      <UserPassport />
+      <CheckInFeed />
+    </FlynetProvider>
+  );
+}
+```
+
+## From scratch
+
+To assemble the passport rows yourself — or build them outside React — read both
+halves from `FlynetMemberClient` directly. The check-in feed embeds full venue
+context, so you rarely need a second call.
 
 ## What you will use
 
-* `GET /flynet/v1/users/me/check_ins` - the authenticated member's check-ins with embedded venue context
-* `GET /flynet/v1/restaurants/{id}` - only when you need fresh brand detail
+* `GET /flynet/v1/users/me` - profile (name, email, account status)
+* `GET /flynet/v1/users/me/status` - tier, level, and progress
+* `GET /flynet/v1/users/me/check_ins` - the member's check-ins with embedded venue context
 
 ## Code
 
 ```typescript theme={null}
-const base = "https://api.staging.blackbird.xyz/flynet/v1";
+import { FlynetMemberClient } from "@flynetdev/core";
 
-const checkInRes = await fetch(
-  `${base}/users/me/check_ins?page=0&page_size=50`,
-  { headers: { Authorization: `Bearer ${process.env.ACCESS_TOKEN!}` } }
-);
+const member = new FlynetMemberClient({ accessToken: process.env.ACCESS_TOKEN! });
 
-const data = await checkInRes.json();
+const profile = await member.getProfile(); // name, email, accountStatus
+const status = await member.getStatus(); // tier, level, progress
+const { checkIns } = await member.listCheckIns({ pageSize: 50 });
 
-const passport = data.check_ins.map((checkIn) => ({
-  visited_at: checkIn.created_at,
-  brand: checkIn.location.restaurant.name,
-  neighborhood: checkIn.location.neighborhood?.name,
-  visit_number: checkIn.visit_number,
-}));
+const passport = {
+  member: `${profile.firstName} ${profile.lastName}`,
+  tier: status.tier,
+  level: status.level,
+  visits: checkIns.map((checkIn) => ({
+    visitedAt: checkIn.createdAt,
+    brand: checkIn.location.restaurant.name,
+    neighborhood: checkIn.location.neighborhood?.name,
+  })),
+};
 
 console.log(passport);
 ```
 
 <Tip>
-  **From the kitchen** - Use the embedded `location.restaurant` from
-  check-ins first. Only fetch `GET /restaurants/{id}` when you need
-  fields not present on the embedded restaurant.
+  **From the kitchen** - Use the embedded `location.restaurant` from check-ins
+  first. Only fetch a restaurant by id (with your `X-API-Key`) when you need
+  brand fields the embedded object doesn't carry.
 </Tip>
 
 <Warning>
-  **Chef's warning** - Restaurant detail calls use `X-API-Key`, not the
-  OAuth bearer token used for check-ins.
+  **Chef's warning** - Profile and check-ins both use the OAuth bearer token.
+  Restaurant detail calls use `X-API-Key` instead — the two credentials don't
+  cross route families.
 </Warning>
 
 **Next:** [Wallet badge](/recipes/mains/flylevel-badge) - show wallet
@@ -4018,7 +4615,7 @@ context alongside the passport.
 
 
 # Real-time check-in reactions
-Source: https://flynet-dev-portal.mintlify.app/recipes/specials/check-in-webhook
+Source: https://docs.flynet.org/recipes/specials/check-in-webhook
 
 Coming soon: react to check-ins as they happen.
 
@@ -4036,7 +4633,7 @@ Until then, build using `GET /flynet/v1/users/me/check_ins` ([Check-in feed](/re
 
 
 # Nearby and paid
-Source: https://flynet-dev-portal.mintlify.app/recipes/specials/nearby-paid
+Source: https://docs.flynet.org/recipes/specials/nearby-paid
 
 Location-aware commerce with Flynet Payment Intents.
 
@@ -4063,7 +4660,7 @@ nearby location selection on top.
 
 
 # Reward a user with FLY
-Source: https://flynet-dev-portal.mintlify.app/recipes/specials/reward-fly
+Source: https://docs.flynet.org/recipes/specials/reward-fly
 
 Coming soon: credit FLY to a user's wallet.
 
@@ -4079,7 +4676,7 @@ When this ships, it will let you credit FLY to a user or creator wallet: spin pa
 
 
 # Industry staff leaderboard
-Source: https://flynet-dev-portal.mintlify.app/recipes/specials/staff-leaderboard
+Source: https://docs.flynet.org/recipes/specials/staff-leaderboard
 
 Coming soon: staff-scoped check-in rankings.
 
@@ -4096,16 +4693,98 @@ Until then, you can prototype overlap with the per-user [Check-in feed](/recipes
 **Want this?** Reach out via [Support](/resources/support).
 
 
+# Brand & naming
+Source: https://docs.flynet.org/resources/brand
+
+How to name, credit, and brand what you build on Flynet — and how to use the Blackbird name and logo.
+
+If you're building on Flynet (or pointing an agent like Claude or Codex at
+it), spend two minutes here before you name your project or drop a logo.
+None of this is meant to slow you down — it's meant to keep your project
+live and out of a takedown queue.
+
+## Give your project its own name
+
+**Blackbird** and **Flynet** are our trademarks. We recommend giving your
+project an original name of its own rather than building it around either
+mark. Naming your project *"Blackbird \[Something]"* or *"Flynet
+\[Something]"* implies an affiliation or endorsement that doesn't exist and
+may infringe the mark, which can lead to a takedown request.
+
+<Warning>
+  Don't put **Blackbird** or **Flynet** in your product name, app name,
+  package name, domain, or social handle. Choose an original name, and
+  signal what it's built on with a **"Powered by Flynet"** credit instead.
+</Warning>
+
+Referencing the names in your copy is fine — *"check in at restaurants on
+Blackbird"*, *"built on Flynet"* — the line is between **naming** your
+project (use your own) and **referencing** ours (welcome).
+
+## Using the Blackbird logo
+
+You may use the Blackbird logo as long as it's:
+
+* Used correctly — don't recolor, stretch, redraw, or recompose it.
+* **Linked to one of our surfaces** — the logo should be a link, not
+  decoration.
+
+Preferred destinations to link to:
+
+* [blackbird.xyz](https://www.blackbird.xyz/)
+* [flynet.org](https://flynet.org)
+
+## Crediting Flynet
+
+When you reference Flynet or `$FLY` in your copy, write them consistently:
+
+* **Flynet** — one word, capital F, the rest lowercase.
+* **`$FLY`** — uppercase, with the `$` prefix when you mean the token.
+
+Flynet and FLY don't have a formal brand identity or guidelines yet, so
+there isn't a strict kit to follow. When you're reaching for something to
+signal what your project is built on:
+
+<Note>
+  Put **"Powered by Flynet"** in text. It's the safe, always-correct way
+  to credit the network without putting our marks in your name.
+</Note>
+
+## Quick reference
+
+| Do                                                     | Don't                                                   |
+| ------------------------------------------------------ | ------------------------------------------------------- |
+| Give your project its own, original name               | Name it *"Blackbird \_\_\_"* or *"Flynet \_\_\_"*       |
+| Reference Blackbird or Flynet in your copy             | Use either name in your app, package, domain, or handle |
+| Credit with **"Powered by Flynet"**                    | Imply an official affiliation or endorsement            |
+| Link the Blackbird logo to blackbird.xyz or flynet.org | Recolor, redraw, or detach the logo                     |
+
+Have a naming or logo question that isn't covered here? Reach out via
+[Support](/resources/support).
+
+
 # Changelog
-Source: https://flynet-dev-portal.mintlify.app/resources/changelog
+Source: https://docs.flynet.org/resources/changelog
 
 Recent Flynet API and documentation updates.
 
 Notable changes to the Flynet API and documentation will appear here.
 
+## TypeScript SDK published
+
+The official TypeScript SDK is now available on npm: `@flynetdev/core`
+(framework-agnostic client) and `@flynetdev/react` (React provider,
+hooks, and components). Install whichever fits your stack.
+
+## `/check_ins` filter now optional
+
+`GET /check_ins` no longer requires a filter. A bare request returns the
+full paginated set; filters (`user`, `location`, `restaurant`,
+`created_after`, `created_before`) remain optional and AND together.
+
 
 # Debugging
-Source: https://flynet-dev-portal.mintlify.app/resources/debugging
+Source: https://docs.flynet.org/resources/debugging
 
 Common error codes and what to do about them.
 
@@ -4115,22 +4794,21 @@ Every 4xx / 5xx response carries either an `error_code` (in JSON envelopes) or a
 
 ## Auth errors
 
-| Code                      | Where                                                 | Cause                                                                                       | Fix                                                                                                                                                                                                                                                                                                                 |
-| ------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| <a />`MISSING_API_KEY`    | Discovery 401 (JSON)                                  | No `X-API-Key` header on `/restaurants*` or `/locations*`.                                  | Add `-H "X-API-Key: $API_KEY"`.                                                                                                                                                                                                                                                                                     |
-| <a />`INVALID_API_KEY`    | Discovery 401 (JSON)                                  | Key expired, revoked, or wrong environment.                                                 | Confirm you're using the key you received for the environment you're calling. Don't try to use a staging key against production or vice versa; the prefix isn't a guarantee, but the server-side binding is. If the key is the right one and still rejected, request a fresh one via [Support](/resources/support). |
-| <a />`invalid_token`      | OAuth 401 (`WWW-Authenticate` header)                 | Malformed JWT, expired, or signed by the wrong issuer.                                      | Refresh the token. If refresh also fails, restart the OAuth flow from [Step 1](/concepts/oauth).                                                                                                                                                                                                                    |
-| <a />`insufficient_scope` | OAuth **403** (`WWW-Authenticate` header, empty body) | Token is valid but missing the scope this route needs. The route exists; this is not a 404. | Re-authorize with the required scope. `read:profile` gates `/users/me` + `/users/me/status`; `read:checkins` gates `/check_ins*` + `/users/me/check_ins`; `read:wallets` gates `/users/me/wallets`.                                                                                                                 |
-| <a />`invalid_grant`      | `/oauth/token` 400                                    | Refresh token already used, or authorization code expired/replayed.                         | Refresh tokens are single-use; the most recent refresh is authoritative. If you replayed a stale one, restart the OAuth flow.                                                                                                                                                                                       |
-| <a />`invalid_client`     | `/oauth/token` 400/401                                | `client_id` / `client_secret` mismatch.                                                     | Re-check the credentials in your onboarding email. The secret is backend-only; confirm it's not getting truncated or surrounded by whitespace.                                                                                                                                                                      |
+| Code                      | Where                                 | Cause                                                                                                                                                                 | Fix                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <a />*(no body)*          | Any 401 (`WWW-Authenticate` header)   | No credential: missing `X-API-Key` on a Discovery route, or missing/blank `Authorization: Bearer` on a member route. The body is empty — the reason is in the header. | Add the right credential for the route family: `-H "X-API-Key: $API_KEY"` for `/restaurants*` + `/locations*`, `-H "Authorization: Bearer $TOKEN"` elsewhere.                                                                                                                                                                                         |
+| <a />`invalid_api_key`    | Discovery 401 (JSON envelope A)       | Key expired, revoked, or wrong environment.                                                                                                                           | Confirm you're using the key you received for the environment you're calling. Don't try to use a staging key against production or vice versa; the prefix isn't a guarantee, but the server-side binding is. If the key is the right one and still rejected, request a fresh one via [Support](/resources/support).                                   |
+| <a />`invalid_token`      | OAuth 401 (`WWW-Authenticate` header) | Malformed JWT, expired, or signed by the wrong issuer.                                                                                                                | Refresh the token. If refresh also fails, restart the OAuth flow from [Step 1](/concepts/oauth).                                                                                                                                                                                                                                                      |
+| <a />`insufficient_scope` | **403** (`WWW-Authenticate` header)   | Token or key is valid but missing the scope this route needs. The route exists; this is not a 404.                                                                    | Re-authorize (or remint the key) with the required scope. OAuth: `read:profile` gates `/users/me` + `/users/me/status`; `read:user_checkins` gates `/users/me/check_ins`; `read:wallets` gates `/users/me/wallets`; `read:memberships` gates `/users/me/memberships`. API key: `read:checkins` gates the `/check_ins` venue feed + `/check_ins/{id}`. |
+| <a />`invalid_grant`      | `/oauth/token` 400                    | Refresh token already used, or authorization code expired/replayed.                                                                                                   | Refresh tokens are single-use; the most recent refresh is authoritative. If you replayed a stale one, restart the OAuth flow.                                                                                                                                                                                                                         |
+| <a />`invalid_client`     | `/oauth/token` 400/401                | `client_id` / `client_secret` mismatch.                                                                                                                               | Re-check the credentials in your onboarding email. The secret is backend-only; confirm it's not getting truncated or surrounded by whitespace.                                                                                                                                                                                                        |
 
 ## Payment errors
 
-| Code                                                  | Where                                    | Cause                                                                | Fix                                                                                                                                                                         |
-| ----------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| <a />`payment0030`                                    | `POST /payment_intents/{id}/confirm` 400 | Member doesn't hold enough FLY.                                      | Check wallet balance before confirm. Surface a "top up" prompt or fall back to a different funding source.                                                                  |
-| <a />`paymentIntent0003`                              | `confirm` / `cancel` / `refund` 400      | Wrong-state transition (e.g. confirming an already-canceled intent). | Read the current `status` before acting. The state machine is one-way: `pending → paid → refunded`, or `pending → canceled`, or `pending → expired`.                        |
-| <a />`resource_not_found` (with `flynet_merchant_id`) | `POST /payment_intents` 404              | Merchant id not visible to your partner app.                         | Confirm the `flynet_merchant_id` from your onboarding email exactly matches what you're sending. If it does and you still get 404, route via [Support](/resources/support). |
+| Code                     | Where                                    | Cause                                                                | Fix                                                                                                                                                  |
+| ------------------------ | ---------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <a />`payment0030`       | `POST /payment_intents/{id}/confirm` 400 | Member doesn't hold enough FLY.                                      | Check wallet balance before confirm. Surface a "top up" prompt or fall back to a different funding source.                                           |
+| <a />`paymentIntent0003` | `confirm` / `cancel` / `refund` 400      | Wrong-state transition (e.g. confirming an already-canceled intent). | Read the current `status` before acting. The state machine is one-way: `pending → paid → refunded`, or `pending → canceled`, or `pending → expired`. |
 
 ## Routing and request-shape errors
 
@@ -4145,15 +4823,16 @@ A common gotcha: which 401 envelope you see is determined by the
 route family's gating filter, not by which credential you happened
 to send.
 
-| Route you called                                                   | Header you sent                          | What you get back                                                                                  |
-| ------------------------------------------------------------------ | ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `/restaurants*` or `/locations*`                                   | nothing                                  | `401` JSON `MISSING_API_KEY`                                                                       |
-| `/restaurants*` or `/locations*`                                   | invalid `X-API-Key`                      | `401` JSON `INVALID_API_KEY`                                                                       |
-| `/restaurants*` or `/locations*`                                   | `Authorization: Bearer …` (wrong scheme) | `401` JSON `MISSING_API_KEY` (the OAuth bearer is ignored; the route's filter only knows API keys) |
-| `/users/me/*`, `/check_ins*`, `/memberships`, `/payment_intents/*` | nothing                                  | `401` **empty body** + `WWW-Authenticate: Bearer`                                                  |
-| `/users/me/*`, `/check_ins*`, `/memberships`, `/payment_intents/*` | invalid bearer                           | `401` **empty body** + `WWW-Authenticate: Bearer error="invalid_token"…`                           |
-| `/users/me/*`, `/check_ins*`, `/memberships`, `/payment_intents/*` | valid bearer, wrong scope                | `403` **empty body** + `WWW-Authenticate: Bearer error="insufficient_scope"`                       |
-| `/users/me/*`, `/check_ins*`, `/memberships`, `/payment_intents/*` | `X-API-Key: …` (wrong scheme)            | `401` **empty body** (the API key is ignored; the route's filter only knows bearers)               |
+| Route you called                                                     | Header you sent                          | What you get back                                                                                                  |
+| -------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `/restaurants*`, `/locations*`, `/check_ins` feed, `/check_ins/{id}` | nothing                                  | `401` **empty body** + `WWW-Authenticate: Bearer`                                                                  |
+| `/restaurants*` or `/locations*`                                     | invalid `X-API-Key`                      | `401` JSON `invalid_api_key` (envelope A)                                                                          |
+| `/check_ins` feed, `/check_ins/{id}`                                 | `X-API-Key` without `read:checkins`      | `403` JSON `insufficient_scope`                                                                                    |
+| `/restaurants*`, `/locations*`, `/check_ins` feed, `/check_ins/{id}` | `Authorization: Bearer …` (wrong scheme) | `401` **empty body** + `WWW-Authenticate: Bearer` (the bearer carries no API key, so the route sees no credential) |
+| `/users/me/*`, `/payment_intents/*`                                  | nothing                                  | `401` **empty body** + `WWW-Authenticate: Bearer`                                                                  |
+| `/users/me/*`, `/payment_intents/*`                                  | invalid bearer                           | `401` **empty body** + `WWW-Authenticate: Bearer error="invalid_token"…`                                           |
+| `/users/me/*`, `/payment_intents/*`                                  | valid bearer, wrong scope                | `403` **empty body** + `WWW-Authenticate: Bearer error="insufficient_scope"`                                       |
+| `/users/me/*`, `/payment_intents/*`                                  | `X-API-Key: …` (wrong scheme)            | `401` **empty body** (the API key is ignored; the route's filter only knows bearers)                               |
 
 If you accidentally send the wrong credential type, the 401 looks
 exactly like a missing-credential 401: there's no friendly "you
@@ -4166,8 +4845,8 @@ scope the route needs, not a credential-type problem.
 
 These don't return errors, but they don't do what you'd expect either.
 
-* **Unknown query parameters on `/check_ins` are silently ignored.** A typo like `users=` instead of `user=` is treated as no filter supplied. Since an unfiltered `/check_ins` is now valid, you won't get an error; you'll get the full unfiltered set, which is more rows than you expected.
-* **`/memberships` ignores an unrecognized filter param.** A typo like `restaurant_id=` instead of `restaurant=` returns the unfiltered membership set rather than an error.
+* **Unknown query parameters on `/check_ins` are silently ignored.** A typo like `restaurants=` instead of `restaurant=` is treated as no filter supplied. Since an unfiltered `/check_ins` is valid, you won't get an error; you'll get the full unfiltered set, which is more rows than you expected.
+* **`/users/me/memberships` ignores an unrecognized filter param.** A typo like `restaurant_id=` instead of `restaurant=` returns the unfiltered membership set rather than an error.
 * **Filter params on `/restaurants` (`cohort`, `cuisine`) and `/locations` (`restaurant`, `neighborhood`, `payments_enabled`, `is_club`) are accepted but not implemented server-side.** Filter client-side until they ship.
 * **`Restaurant.cohort` is currently a free-form string** (the enum was removed). Don't `switch` on a fixed value set.
 * **`Coordinate { latitude: 0.0, longitude: 0.0 }` indicates missing geocoding**, not a real point. Filter these out before placing map markers.
@@ -4186,7 +4865,7 @@ If your response had an `X-Request-Id` header, paste that too.
 
 
 # FAQ
-Source: https://flynet-dev-portal.mintlify.app/resources/faq
+Source: https://docs.flynet.org/resources/faq
 
 Common questions and gotchas.
 
@@ -4200,9 +4879,10 @@ registered redirect URI and allowed scopes.
 ### What is the difference between OAuth and API keys?
 
 Different routes require different credentials. Use OAuth for
-member-acting routes: `/users/me/*`, `/check_ins*`, `/memberships`,
-and `/payment_intents/*`. Use an API key for restaurant and location
-Discovery. They are not interchangeable.
+member-acting routes: `/users/me/*` (profile, status, wallets, tags,
+check-ins, memberships) and `/payment_intents/*`. Use an API key for
+restaurant and location Discovery and for the `/check_ins` venue feed
+(including `/check_ins/{id}`). They are not interchangeable.
 
 See [Authentication](/concepts/authentication) for the per-route table.
 
@@ -4216,10 +4896,13 @@ decode `sub` yourself if you want the member's UUID for your own state.
 ### Why do I get a `403` instead of a `401` on a member route?
 
 The token is valid but doesn't carry the scope that route requires.
-`read:profile` gates `/users/me` + `/users/me/status`, `read:checkins`
-gates `/check_ins*` + `/users/me/check_ins`, and `read:wallets` gates
-`/users/me/wallets`. Re-authorize requesting the scope you need. The
-`403` body is empty; the reason is in the `WWW-Authenticate` header.
+`read:profile` gates `/users/me` + `/users/me/status`,
+`read:user_checkins` gates `/users/me/check_ins`, `read:wallets` gates
+`/users/me/wallets`, and `read:memberships` gates `/users/me/memberships`.
+(The `/check_ins` venue feed and `/check_ins/{id}` are API-key routes
+gated by the separate `read:checkins` scope on the key.) Re-authorize
+requesting the scope you need. The `403` body is empty; the reason is in
+the `WWW-Authenticate` header.
 
 ### Why do my refresh tokens stop working after one use?
 
@@ -4239,11 +4922,11 @@ the code may already be spent.
 ### Do I need a filter on `GET /check_ins`?
 
 No. A bare `GET /check_ins` is valid and returns the full paginated
-set. Filters (`[user, location, restaurant, created_after,
+set. Filters (`[restaurant, location, created_after,
 created_before]`) are optional and AND together. (Earlier launch
 builds required at least one filter; that requirement was dropped.)
-For the authenticated member's own history, prefer
-`/users/me/check_ins`.
+`/check_ins` is an anonymized venue feed — for the authenticated
+member's own history, use `/users/me/check_ins`.
 
 ### Why does `?created_after=1715468700` return 400?
 
@@ -4253,9 +4936,9 @@ epoch seconds. Use `2026-04-01T00:00:00Z`.
 ### Why does `?some_filter=value` return unfiltered results?
 
 Unknown query parameters are silently ignored. Check the parameter
-name. For example, `?users=...` instead of `?user=...` is silently
-dropped, so you get the full unfiltered set rather than an error,
-which means more rows than you expected.
+name. For example, `?restaurants=...` instead of `?restaurant=...` is
+silently dropped, so you get the full unfiltered set rather than an
+error, which means more rows than you expected.
 
 ## Payments
 
@@ -4275,15 +4958,15 @@ Partial refunds are on the roadmap.
 Not in v1. Poll the intent's status with `GET /payment_intents/{id}`
 to see state changes.
 
-### Why does my idempotent replay return 200 instead of 201?
+### Does reusing an `idempotency_key` create a duplicate intent?
 
-The same `idempotency_key` on the same `flynet_merchant_id` returns
-the existing intent with HTTP 200. A new key creates a new intent
-with HTTP 201.
+No. Per the API contract, reusing the same `idempotency_key` returns
+the existing intent rather than creating a second one. A new key
+creates a new intent.
 
 
 # Request access
-Source: https://flynet-dev-portal.mintlify.app/resources/request-access
+Source: https://docs.flynet.org/resources/request-access
 
 Apply for Flynet staging credentials. Tell us what you are building and we will get you a working set of keys.
 
@@ -4311,7 +4994,7 @@ We'll email the contact you provide with a staging credential set and a link to 
 
 
 # Support
-Source: https://flynet-dev-portal.mintlify.app/resources/support
+Source: https://docs.flynet.org/resources/support
 
 How to get help building on Flynet.
 
@@ -4330,7 +5013,7 @@ For partner-blocking issues, mark your email as **urgent** in the subject line.
 
 
 # About Flynet
-Source: https://flynet-dev-portal.mintlify.app/what-is-flynet
+Source: https://docs.flynet.org/what-is-flynet
 
 Build on the restaurant economy. Get FLY.
 
@@ -4389,6 +5072,11 @@ behalf of merchants.
 * **Memberships**: the member's restaurant membership records
 * **Check-ins**: visit records with embedded venue context (filters optional)
 * **Payments**: accept FLY-funded payments from Blackbird members on behalf of your merchants
+
+A published TypeScript SDK is the supported way to build on all of
+this: [`@flynetdev/core`](/concepts/typescript-client) for typed
+backend calls and [`@flynetdev/react`](/components) for drop-in React
+components.
 
 More APIs are on the way, including rewards, webhooks, and Mini Apps
 inside the Blackbird app surface itself.
